@@ -1,0 +1,8 @@
+{
+  "name": "latexbuilder",
+  "private": true,
+  "description": "수식 빌더 · PBPK 투여 모델링 — index.html 하나로 동작하는 정적 페이지",
+  "scripts": {
+    "test": "node --test"
+  }
+}

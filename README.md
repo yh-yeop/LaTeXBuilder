@@ -12,6 +12,14 @@
 ## 구성
 - `index.html` 한 파일로 동작합니다 (HTML·CSS·JS 포함).
 - 수식 렌더링은 MathJax 3 (cdnjs)를 불러옵니다. 오프라인에서는 LaTeX 원문으로 표시됩니다.
+- 계산 코어(수식 파서, LaTeX 출력, 컴파일, Dormand–Prince 적분기, 보간, 눈금)는 `/* @core-start */ … /* @core-end */` 주석으로 표시돼 있고 DOM을 건드리지 않습니다.
+
+## 테스트
+`test/core.test.js`가 `index.html`에서 `@core` 블록을 그대로 꺼내 Node 내장 러너로 돌립니다. 파서 우선순위, LaTeX 출력 형식, 적분기 정확도(해석해 대비), 반복 투약의 중첩 원리·질량 보존 등을 검사합니다.
+```
+npm test        # Node 22+, 의존성 없음
+```
+푸시할 때마다 GitHub Actions가 같은 테스트를 돌립니다. 앞으로 할 일은 [ROADMAP.md](ROADMAP.md)에 있습니다.
 
 ## 주의
 모델 파라미터 일부는 문헌 값이고 일부는 가정입니다. 페이지의 변수 카드에서 근거 표시(문헌·보정·계산·가정)를 확인하세요.
