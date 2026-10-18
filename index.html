@@ -1551,6 +1551,7 @@ function run(){
       });
       const done=sweeps=>{ if(job!==S.sweepJob||!S.result) return; S.result.sweeps=sweeps; S.sweepPending=false; renderLegend(); drawPlot(); };
       if(workerUsable()){
+        if(S.sweepPending&&!fitJob) workerCancel();  // 아직 안 끝난 이전 스윕은 버린다 (슬라이더를 끌 때 작업이 쌓이지 않도록)
         S.sweepPending=true;
         workerJob('sweep',{model:M,name:sw.name,values:sw.vals}).then(r=>done(r.sweeps)).catch(()=>{ if(job===S.sweepJob) done(sync()); });
       }else{ S.sweepPending=false; S.result.sweeps=sync(); }
