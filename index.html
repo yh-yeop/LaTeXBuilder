@@ -350,6 +350,34 @@ async function copyText(txt){
   }catch(e){ toast('복사하지 못했습니다. 직접 선택해서 복사해 주세요'); }
 }
 
+/* ---- 공유 링크: 모델 JSON → (deflate-raw 압축) → Base64URL. 접두어 z.(압축) / j.(압축 없음) ---- */
+function b64urlEncode(bytes){
+  let s=''; for(let i=0;i<bytes.length;i+=0x8000) s+=String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000));
+  return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function b64urlDecode(str){
+  str=String(str).replace(/-/g,'+').replace(/_/g,'/'); while(str.length%4) str+='=';
+  const bin=atob(str); const out=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) out[i]=bin.charCodeAt(i);
+  return out;
+}
+async function pipeBytes(bytes,stream){ return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer()); }
+async function encodeShare(obj){
+  const bytes=new TextEncoder().encode(JSON.stringify(obj));
+  if(typeof CompressionStream==='function'){ try{ return 'z.'+b64urlEncode(await pipeBytes(bytes,new CompressionStream('deflate-raw'))); }catch(e){} }
+  return 'j.'+b64urlEncode(bytes);
+}
+async function decodeShare(str){
+  const m=/^([zj])\.([A-Za-z0-9_-]*)$/.exec(String(str).trim());
+  if(!m) throw new Error('링크 형식이 맞지 않습니다');
+  let bytes=b64urlDecode(m[2]);
+  if(m[1]==='z'){
+    if(typeof DecompressionStream!=='function') throw new Error('이 브라우저는 압축된 링크를 풀 수 없습니다');
+    bytes=await pipeBytes(bytes,new DecompressionStream('deflate-raw'));
+  }
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+
 /* ================= 수식 파서 ================= */
 const FUNCS={exp:1,ln:1,log10:1,sqrt:1,abs:1,sin:1,cos:1,tan:1,tanh:1,step:1,floor:1,ceil:1,min:2,max:2,mod:3};
 const RESERVED=new Set(['t','pi']);
@@ -1004,19 +1032,24 @@ function lin(y,hh,ks,as){
   for(let i=0;i<y.length;i++){ let s=0; for(let j=0;j<as.length;j++) s+=as[j]*ks[j][i]; r[i]=y[i]+hh*s; }
   return r;
 }
-function integrate(f,P,y0,t0,t1,rtol,div){
+// Dormand–Prince 5(4). opt.detect 가 켜져 있으면 Hairer 의 강성 감지(h·|λ| 추정이 15스텝 연속 3.25 초과)로 멈추고 code='stiff' 를 돌려준다.
+// code: null(정상) | 'stiff' | 'steps'(스텝 수 초과) | 'small'(스텝이 너무 작음) | 'nan'(발산)
+function integrate(f,P,y0,t0,t1,rtol,div,opt){
+  opt=opt||{};
   const atol=1e-10; const n=y0.length;
   let t=t0,y=y0.slice(); const T=[t],Y=[y.slice()];
-  div=div||400; const hmax=(t1-t0)/div; let hh=Math.min(hmax,(t1-t0)/100); let steps=0,warn=null;
+  div=div||400; const hmax=(t1-t0)/div; let hh=Math.min(hmax,(t1-t0)/100); let steps=0,warn=null,code=null;
+  const maxSteps=opt.maxSteps||200000; let iasti=0,nonsti=0;
   let k1=f(t,y,P);
   while(t<t1-1e-13*Math.abs(t1)){
-    if(steps++>200000){ warn='스텝 수가 너무 많아 중단했습니다 (강성 문제일 수 있음)'; break; }
+    if(steps++>maxSteps){ warn='스텝 수가 너무 많아 중단했습니다 (강성 문제일 수 있음)'; code='steps'; break; }
     if(t+hh>t1) hh=t1-t;
     const k2=f(t+C2*hh,lin(y,hh,[k1],[A21]),P);
     const k3=f(t+C3*hh,lin(y,hh,[k1,k2],[A31,A32]),P);
     const k4=f(t+C4*hh,lin(y,hh,[k1,k2,k3],[A41,A42,A43]),P);
     const k5=f(t+C5*hh,lin(y,hh,[k1,k2,k3,k4],[A51,A52,A53,A54]),P);
-    const k6=f(t+hh,lin(y,hh,[k1,k2,k3,k4,k5],[A61,A62,A63,A64,A65]),P);
+    const g6=lin(y,hh,[k1,k2,k3,k4,k5],[A61,A62,A63,A64,A65]);
+    const k6=f(t+hh,g6,P);
     const yn=lin(y,hh,[k1,k3,k4,k5,k6],[A71,A73,A74,A75,A76]);
     const k7=f(t+hh,yn,P);
     let en=0;
@@ -1025,12 +1058,86 @@ function integrate(f,P,y0,t0,t1,rtol,div){
       const sc=atol+rtol*Math.max(Math.abs(y[i]),Math.abs(yn[i]));
       en=Math.max(en,Math.abs(e)/sc);
     }
-    if(!isFinite(en)){ warn='값이 발산했습니다 (NaN 또는 ∞). 식이나 변수 값을 확인해 주세요'; break; }
-    if(en<=1){ t+=hh; y=yn; k1=k7; T.push(t); Y.push(y.slice()); }
+    if(!isFinite(en)){ warn='값이 발산했습니다 (NaN 또는 ∞). 식이나 변수 값을 확인해 주세요'; code='nan'; break; }
+    if(en<=1){
+      t+=hh; y=yn; k1=k7; T.push(t); Y.push(y.slice());
+      if(opt.detect){
+        let sn=0,sd=0;
+        for(let i=0;i<n;i++){ const a=k7[i]-k6[i],b=yn[i]-g6[i]; sn+=a*a; sd+=b*b; }
+        if(sd>0){
+          if(hh*Math.sqrt(sn/sd)>3.25){ nonsti=0; if(++iasti>=15){ code='stiff'; break; } }
+          else if(++nonsti>6) iasti=0;
+        }
+      }
+    }
     hh=Math.min(hmax,hh*Math.min(5,Math.max(0.2,0.9*Math.pow(en||1e-10,-0.2))));
-    if(hh<1e-14*Math.max(1,Math.abs(t))){ warn='스텝이 너무 작아져 중단했습니다'; break; }
+    if(hh<1e-14*Math.max(1,Math.abs(t))){ warn='스텝이 너무 작아져 중단했습니다'; code='small'; break; }
   }
-  return {T,Y,warn};
+  return {T,Y,warn,code};
+}
+/* ---- 강성 적분기: Rodas3 (Rosenbrock, 4단계 3차, L-안정, 내장 2차 오차 추정; Sandu & Sander KPP 계수) ---- */
+function luSolve(A,b){
+  // 부분 피벗 가우스 소거. A 는 제자리에서 바뀐다
+  const n=b.length,x=b.slice();
+  for(let c=0;c<n;c++){
+    let p=c; for(let r=c+1;r<n;r++) if(Math.abs(A[r][c])>Math.abs(A[p][c])) p=r;
+    if(p!==c){ const tr=A[c]; A[c]=A[p]; A[p]=tr; const tb=x[c]; x[c]=x[p]; x[p]=tb; }
+    const d=A[c][c]; if(d===0) return null;
+    for(let r=c+1;r<n;r++){ const m=A[r][c]/d; if(m===0) continue; const Ar=A[r],Ac=A[c]; for(let k=c;k<n;k++) Ar[k]-=m*Ac[k]; x[r]-=m*x[c]; }
+  }
+  for(let r=n-1;r>=0;r--){ let s=x[r]; const Ar=A[r]; for(let k=r+1;k<n;k++) s-=Ar[k]*x[k]; x[r]=s/Ar[r]; }
+  return x;
+}
+function integrateStiff(f,P,y0,t0,t1,rtol,div){
+  const atol=1e-10,n=y0.length,SQ=1.5e-8;
+  let t=t0,y=y0.slice(); const T=[t],Y=[y.slice()];
+  div=div||400; const hmax=(t1-t0)/div; let hh=Math.min(hmax,(t1-t0)/100); let steps=0,warn=null,code=null;
+  const G=0.5, G1=0.5,G2=1.5, C21=4,C31=1,C32=-1,C41=1,C42=-1,C43=-8/3;
+  const add=(a,b,s)=>{ const r=new Array(n); for(let i=0;i<n;i++) r[i]=a[i]+s*b[i]; return r; };
+  while(t<t1-1e-13*Math.abs(t1)){
+    if(steps++>100000){ warn='스텝 수가 너무 많아 중단했습니다'; code='steps'; break; }
+    if(t+hh>t1) hh=t1-t;
+    const f0=f(t,y,P);
+    // 수치 야코비안과 ∂f/∂t
+    const J=new Array(n);
+    for(let i=0;i<n;i++) J[i]=new Array(n);
+    for(let j=0;j<n;j++){
+      const d=SQ*Math.max(1e-5,Math.abs(y[j])); const yp=y.slice(); yp[j]+=d; const fp=f(t,yp,P);
+      for(let i=0;i<n;i++) J[i][j]=(fp[i]-f0[i])/d;
+    }
+    const dt=SQ*Math.max(1e-6,Math.abs(t),hh); const ft=f(t+dt,y,P); const dfdt=new Array(n);
+    for(let i=0;i<n;i++) dfdt[i]=(ft[i]-f0[i])/dt;
+    const solve=rhs=>{ const A=new Array(n); const dg=1/(hh*G); for(let i=0;i<n;i++){ A[i]=new Array(n); for(let j=0;j<n;j++) A[i][j]=(i===j?dg:0)-J[i][j]; } return luSolve(A,rhs); };
+    let bad=false; const r1=new Array(n);
+    for(let i=0;i<n;i++) r1[i]=f0[i]+hh*G1*dfdt[i];
+    const K1=solve(r1); if(!K1){ bad=true; }
+    let K2,K3,K4,yn;
+    if(!bad){
+      const r2=new Array(n); for(let i=0;i<n;i++) r2[i]=f0[i]+C21/hh*K1[i]+hh*G2*dfdt[i];
+      K2=solve(r2); if(!K2) bad=true;
+    }
+    if(!bad){
+      const F3=f(t+hh,add(y,K1,2),P); const r3=new Array(n);
+      for(let i=0;i<n;i++) r3[i]=F3[i]+(C31*K1[i]+C32*K2[i])/hh;
+      K3=solve(r3); if(!K3) bad=true;
+    }
+    if(!bad){
+      const y4=new Array(n); for(let i=0;i<n;i++) y4[i]=y[i]+2*K1[i]+K3[i];
+      const F4=f(t+hh,y4,P); const r4=new Array(n);
+      for(let i=0;i<n;i++) r4[i]=F4[i]+(C41*K1[i]+C42*K2[i]+C43*K3[i])/hh;
+      K4=solve(r4); if(!K4) bad=true;
+    }
+    let en=Infinity;
+    if(!bad){
+      yn=new Array(n); en=0;
+      for(let i=0;i<n;i++){ yn[i]=y[i]+2*K1[i]+K3[i]+K4[i]; const sc=atol+rtol*Math.max(Math.abs(y[i]),Math.abs(yn[i])); en=Math.max(en,Math.abs(K4[i])/sc); }
+      if(!isFinite(en)){ warn='값이 발산했습니다 (NaN 또는 ∞). 식이나 변수 값을 확인해 주세요'; code='nan'; break; }
+      if(en<=1){ t+=hh; y=yn; T.push(t); Y.push(y.slice()); }
+    }
+    hh=Math.min(hmax,hh*(isFinite(en)?Math.min(5,Math.max(0.2,0.9*Math.pow(en||1e-10,-1/3))):0.25));
+    if(hh<1e-14*Math.max(1,Math.abs(t))){ warn='스텝이 너무 작아져 중단했습니다'; code='small'; break; }
+  }
+  return {T,Y,warn,code};
 }
 function makeEvents(C,P,nStates,t0,t1){
   const ev=[],warn=[]; const Z=new Array(nStates).fill(0);
@@ -1044,8 +1151,10 @@ function makeEvents(C,P,nStates,t0,t1){
   ev.sort((a,b)=>a.t-b.t);
   return {ev,warn};
 }
-function integrateEvents(C,P,y0,t0,t1,rtol,events){
-  let y=y0.slice(); const T=[t0],Y=[y.slice()]; let warn=null,k=0,tc=t0;
+// method: 'auto'(기본; 명시적으로 시작해 강성이 감지되면 그 지점부터 강성 적분기로) | 'explicit' | 'stiff'. 결과의 stiff 는 강성 적분기를 썼는지
+function integrateEvents(C,P,y0,t0,t1,rtol,events,method){
+  method=method==='stiff'||method==='explicit'?method:'auto';
+  let y=y0.slice(); const T=[t0],Y=[y.slice()]; let warn=null,k=0,tc=t0,stiff=method==='stiff';
   const apply=te=>{
     let any=false;
     while(k<events.length&&events[k].t<=te+1e-12){ const e=events[k++]; y[e.i]+=e.amt/C.caps[e.i](te,y,P); any=true; }
@@ -1055,14 +1164,24 @@ function integrateEvents(C,P,y0,t0,t1,rtol,events){
   while(tc<t1-1e-13*Math.abs(t1)){
     const tn=k<events.length?Math.min(events[k].t,t1):t1;
     if(tn>tc+1e-13*Math.max(1,Math.abs(tc))){
-      const r=integrate(C.f,P,y,tc,tn,rtol,events.length>150?100:400);
+      const div=events.length>150?100:400;
+      let r;
+      if(stiff) r=integrateStiff(C.f,P,y,tc,tn,rtol,div);
+      else{
+        r=integrate(C.f,P,y,tc,tn,rtol,div,{detect:method==='auto'});
+        if(method==='auto'&&r.code&&r.code!=='nan'){
+          stiff=true;
+          const r2=integrateStiff(C.f,P,r.Y[r.Y.length-1],r.T[r.T.length-1],tn,rtol,div);
+          r={T:r.T.concat(r2.T.slice(1)),Y:r.Y.concat(r2.Y.slice(1)),warn:r2.warn};
+        }
+      }
       for(let j=1;j<r.T.length;j++){ T.push(r.T[j]); Y.push(r.Y[j]); }
       y=r.Y[r.Y.length-1].slice();
       if(r.warn){ warn=r.warn; break; }
     }
     tc=tn; apply(tc);
   }
-  return {T,Y,warn};
+  return {T,Y,warn,stiff};
 }
 function interp1(T,V,t){
   let lo=0,hi=T.length-1;
@@ -1105,6 +1224,198 @@ function windowStats(T,V,a,b,thr){
     });
   }
   return {auc,mx,above};
+}
+
+/* ---- Nelder–Mead 단체법. nelderMeadIter 는 한 번에 한 반복씩 진행하는 반복자(UI 를 멈추지 않고 쪼개 돌리기 위해) ---- */
+function nelderMeadIter(f,x0,o){
+  o=o||{};
+  const n=x0.length, step=o.step||0.1, maxIter=o.maxIter||300, tol=o.tol==null?1e-8:o.tol, xtol=o.xtol==null?1e-6:o.xtol;
+  const pts=[x0.slice()];
+  for(let i=0;i<n;i++){ const p=x0.slice(); p[i]+=Array.isArray(step)?step[i]:step; pts.push(p); }
+  let F=pts.map(x=>f(x)), iter=0, evals=n+1, done=false;
+  const order=()=>{ const idx=pts.map((_,i)=>i).sort((a,b)=>F[a]-F[b]); const P2=idx.map(i=>pts[i]),F2=idx.map(i=>F[i]); for(let i=0;i<=n;i++){ pts[i]=P2[i]; F[i]=F2[i]; } };
+  const comb=(a,b,w)=>a.map((v,i)=>v+w*(b[i]-v));
+  order();
+  const state=()=>({done,x:pts[0].slice(),fx:F[0],iter,evals});
+  return {
+    next(){
+      if(done) return state();
+      let diam=0; for(let i=1;i<=n;i++) for(let j=0;j<n;j++) diam=Math.max(diam,Math.abs(pts[i][j]-pts[0][j]));
+      if((iter>0&&Math.abs(F[n]-F[0])<=tol*(Math.abs(F[0])+tol)&&diam<=xtol)||iter>=maxIter){ done=true; return state(); }
+      const c=new Array(n).fill(0);
+      for(let i=0;i<n;i++) for(let j=0;j<n;j++) c[j]+=pts[i][j]/n;
+      const w=pts[n]; const xr=comb(c,w,-1); const fr=f(xr); evals++;
+      if(fr<F[0]){
+        const xe=comb(c,w,-2); const fe=f(xe); evals++;
+        if(fe<fr){ pts[n]=xe; F[n]=fe; } else { pts[n]=xr; F[n]=fr; }
+      }else if(fr<F[n-1]){ pts[n]=xr; F[n]=fr; }
+      else{
+        const outside=fr<F[n];
+        const xc=outside?comb(c,xr,0.5):comb(c,w,0.5); const fc=f(xc); evals++;
+        if(outside?fc<=fr:fc<F[n]){ pts[n]=xc; F[n]=fc; }
+        else{ for(let i=1;i<=n;i++){ pts[i]=comb(pts[0],pts[i],0.5); F[i]=f(pts[i]); evals++; } }
+      }
+      order(); iter++;
+      if(o.onIter&&o.onIter(iter,pts[0],F[0])===false) done=true;
+      return state();
+    }
+  };
+}
+function nelderMead(f,x0,o){ const it=nelderMeadIter(f,x0,o); let s; do{ s=it.next(); }while(!s.done); return s; }
+
+/* ---- 파라미터 추정 문제: 상수 names 를 [min,max](log 옵션) 안에서 [0,1] 로 정규화해 Nelder–Mead 에 넘기고,
+   목적함수는 켜진 실측 데이터 비교(kind 'data')들의 합: 관측이 모두 양수면 Σ(log(sim+ε)−log(obs+ε))², 아니면 Σ((sim−obs)/(|obs|+ε))² ---- */
+function fitProblem(C,names,logs){
+  logs=logs||[];
+  const vars=names.map(n=>M.vars.find(v=>v.name===n&&v.kind==='param'));
+  if(!names.length||vars.some(v=>!v)) throw new Error('맞출 상수 변수를 골라 주세요');
+  const P0={}; M.vars.forEach(v=>{ if(v.kind==='param') P0[v.name]=num(v.value); });
+  const y0=M.eqs.map(q=>num(q.ic)); const t0=num(M.sim.t0),t1=num(M.sim.tEnd);
+  const rtol=Math.max(1e-12,num(M.sim.rtol)||1e-7);
+  const sets=[];
+  M.cmps.forEach((c,ci)=>{
+    if(!c.on||c.kind!=='data'||!String(c.sim||'').trim()) return;
+    const pts=parseData(c.data).filter(p=>p.t>=t0-1e-9&&p.t<=t1+1e-9);
+    if(!pts.length) return;
+    let ymax=0; pts.forEach(p=>{ ymax=Math.max(ymax,Math.abs(p.y)); });
+    sets.push({label:c.label||('비교 '+(ci+1)),fs:C.expr(c.sim),pts,pos:pts.every(p=>p.y>0),eps:1e-6*(ymax||1)});
+  });
+  if(!sets.length) throw new Error('켜진 실측 데이터 비교가 없습니다. 비교 카드에서 실측 데이터를 넣고 켜 주세요');
+  const sc=vars.map((v,i)=>{ let lo=num(v.min),hi=num(v.max); if(!(hi>lo)){ lo=Math.min(lo,num(v.value)); hi=Math.max(hi,num(v.value))||1; } return {lo,hi,lg:!!logs[i]&&lo>0&&hi>lo}; });
+  const toVal=(x,i)=>{ const s=sc[i],u=Math.min(1,Math.max(0,x)); return s.lg?s.lo*Math.pow(s.hi/s.lo,u):s.lo+(s.hi-s.lo)*u; };
+  const fromVal=(val,i)=>{ const s=sc[i]; return s.lg?Math.log(Math.max(val,s.lo)/s.lo)/Math.log(s.hi/s.lo):(val-s.lo)/(s.hi-s.lo); };
+  const x0=vars.map((v,i)=>Math.min(1,Math.max(0,fromVal(num(v.value),i))));
+  const toValues=x=>x.map((v,i)=>toVal(v,i));
+  const toParams=x=>{ const P=Object.assign({},P0); names.forEach((n,i)=>{ P[n]=toVal(x[i],i); }); return P; };
+  const evaluate=P=>{
+    const E=makeEvents(C,P,M.eqs.length,t0,t1);
+    const r=integrateEvents(C,P,y0,t0,t1,rtol,E.ev,M.sim.method);
+    if(r.warn) return {loss:1e100,sets:[],warn:r.warn};
+    let loss=0; const out=[];
+    sets.forEach(s=>{
+      const sv=r.Y.map((y,k)=>s.fs(r.T[k],y,P));
+      s.pts.forEach(p=>{
+        const sim=interp1(r.T,sv,p.t);
+        if(!isFinite(sim)){ loss+=1e50; return; }
+        if(s.pos){ const e=Math.log(Math.max(sim,0)+s.eps)-Math.log(p.y+s.eps); loss+=e*e; }
+        else{ const d=(sim-p.y)/(Math.abs(p.y)+s.eps); loss+=d*d; }
+      });
+      out.push({label:s.label,met:cmpMetrics(s.pts,r.T,sv)});
+    });
+    return {loss,sets:out,warn:null};
+  };
+  const loss=x=>{
+    let pen=0; x.forEach(v=>{ if(v<0) pen+=v*v; else if(v>1) pen+=(v-1)*(v-1); });
+    const L=evaluate(toParams(x)).loss;
+    return L+10*pen*(1+L);
+  };
+  return {names,x0,toValues,toParams,evaluate,loss,logScale:sc.map(s=>s.lg)};
+}
+
+/* ---- 단위 검사: 단위 문자열 → 차원 벡터 [질량, 부피, 시간, 물질량] (접두어·배율은 무시하고 차원만 본다) ---- */
+const UDIM={
+  g:[1,0,0,0],kg:[1,0,0,0],mg:[1,0,0,0],ug:[1,0,0,0],'µg':[1,0,0,0],'μg':[1,0,0,0],ng:[1,0,0,0],pg:[1,0,0,0],
+  L:[0,1,0,0],l:[0,1,0,0],dL:[0,1,0,0],dl:[0,1,0,0],mL:[0,1,0,0],ml:[0,1,0,0],uL:[0,1,0,0],'µL':[0,1,0,0],'μL':[0,1,0,0],
+  h:[0,0,1,0],hr:[0,0,1,0],hour:[0,0,1,0],hours:[0,0,1,0],min:[0,0,1,0],minute:[0,0,1,0],s:[0,0,1,0],sec:[0,0,1,0],d:[0,0,1,0],day:[0,0,1,0],days:[0,0,1,0],wk:[0,0,1,0],week:[0,0,1,0],
+  mol:[0,0,0,1],mmol:[0,0,0,1],umol:[0,0,0,1],'µmol':[0,0,0,1],'μmol':[0,0,0,1],nmol:[0,0,0,1],pmol:[0,0,0,1],
+  M:[0,-1,0,1],mM:[0,-1,0,1],uM:[0,-1,0,1],'µM':[0,-1,0,1],'μM':[0,-1,0,1],nM:[0,-1,0,1],pM:[0,-1,0,1],
+  '%':[0,0,0,0],'%BW':[0,0,0,0],'%CO':[0,0,0,0],'회':[0,0,0,0],'-':[0,0,0,0],'1':[0,0,0,0]
+};
+const UDIM0=[0,0,0,0];
+// 숫자 리터럴은 '어느 단위든 될 수 있음'(any): t - 24 처럼 단위 붙은 양과 더해도 경고하지 않고, 곱셈에서는 무차원으로 본다
+const UANY=Object.assign([0,0,0,0],{any:true});
+const dimEq=(a,b)=>a.every((x,i)=>Math.abs(x-b[i])<1e-9);
+const dimAdd=(a,b,s)=>a.map((x,i)=>x+s*b[i]+0);
+function parseUnit(s){
+  s=String(s==null?'':s).trim();
+  if(!s) return null;
+  const toks=s.replace(/[·×*]/g,' * ').replace(/\//g,' / ').trim().split(/\s+/);
+  let dim=[0,0,0,0],sign=1;
+  for(const tk of toks){
+    if(tk==='*'){ sign=1; continue; }
+    if(tk==='/'){ sign=-1; continue; }
+    const m=/^([A-Za-zµμ%회]+|-|1)(?:\^?(-?\d+(?:\.\d+)?))?$/.exec(tk);
+    if(!m||!(m[1] in UDIM)) return null;
+    const e=m[2]?parseFloat(m[2]):1;
+    dim=dimAdd(dim,UDIM[m[1]],sign*e); sign=1;
+  }
+  return dim;
+}
+function unitText(d){
+  const N=['mg','L','h','mol'],up=[],dn=[];
+  d.forEach((e,i)=>{ if(Math.abs(e)<1e-9) return; const a=Math.abs(e); const s=N[i]+(Math.abs(a-1)<1e-9?'':'^'+(+a.toFixed(4))); (e>0?up:dn).push(s); });
+  if(!up.length&&!dn.length) return '-';
+  return (up.length?up.join('·'):'1')+dn.map(x=>'/'+x).join('');
+}
+// 식의 단위 추론. unitOf(name) → 차원 벡터 또는 null(모름). 결과도 차원 벡터 또는 null. 덧셈·함수 인수의 단위가 어긋나면 throw
+function inferUnit(n,unitOf){
+  switch(n.t){
+    case 'num': return UANY;
+    case 'var': if(n.n==='t') return [0,0,1,0]; if(n.n==='pi') return UDIM0; return unitOf(n.n);
+    case 'neg': return inferUnit(n.a,unitOf);
+    case 'fn': {
+      const ds=n.args.map(a=>inferUnit(a,unitOf));
+      switch(n.n){
+        case 'abs': case 'floor': case 'ceil': return ds[0];
+        case 'sqrt': return ds[0]&&ds[0].map(x=>x/2+0);
+        case 'step': return UDIM0;
+        case 'min': case 'max': case 'mod': {
+          const k=ds.filter(d=>d&&!d.any);
+          for(const d of k) if(!dimEq(d,k[0])) throw new Error(n.n+'() 인수들의 단위가 서로 다릅니다 ('+k.map(unitText).join(', ')+')');
+          return k.length?k[0]:null;
+        }
+        default:
+          if(ds[0]&&!dimEq(ds[0],UDIM0)) throw new Error(n.n+'()의 인수는 무차원이어야 하는데 '+unitText(ds[0])+' 입니다');
+          return UDIM0;
+      }
+    }
+    default: {
+      const a=inferUnit(n.a,unitOf);
+      if(n.op==='^'){
+        const e=n.b.t==='num'?n.b.v:(n.b.t==='neg'&&n.b.a.t==='num')?-n.b.a.v:null;
+        if(e!=null) return a&&a.map(x=>x*e+0);
+        const b=inferUnit(n.b,unitOf);
+        if(b&&!dimEq(b,UDIM0)) throw new Error('지수는 무차원이어야 하는데 '+unitText(b)+' 입니다');
+        return a&&dimEq(a,UDIM0)?UDIM0:null;
+      }
+      const b=inferUnit(n.b,unitOf);
+      if(n.op==='*') return a&&b?dimAdd(a,b,1):null;
+      if(n.op==='/') return a&&b?dimAdd(a,b,-1):null;
+      if(a&&a.any) return b; if(b&&b.any) return a;
+      if(a&&b&&!dimEq(a,b)) throw new Error('더하거나 빼는 두 쪽의 단위가 다릅니다 ('+unitText(a)+' vs '+unitText(b)+')');
+      return a||b;
+    }
+  }
+}
+// 각 방정식에서 (좌변 계수 단위 × 상태 단위 / 시간) 과 항의 단위를 비교한다. 단위를 모르는 변수가 섞인 항은 건너뛴다
+function checkUnits(){
+  const out=[]; const cache=new Map(); const stack=new Set();
+  const unitOf=name=>{
+    if(cache.has(name)) return cache.get(name);
+    let d=null;
+    const q=M.eqs.find(e=>e.state===name), v=M.vars.find(x=>x.name===name);
+    if(q) d=parseUnit(q.unit);
+    else if(v){
+      d=parseUnit(v.unit);
+      if(!d&&v.kind==='func'&&!stack.has(name)){ stack.add(name); try{ d=inferUnit(parse(v.expr),unitOf); }catch(e){ d=null; } stack.delete(name); }
+    }
+    cache.set(name,d); return d;
+  };
+  const safeParse=s=>{ try{ return parse(s); }catch(e){ return null; } };
+  M.eqs.forEach((q,i)=>{
+    const sd=parseUnit(q.unit); if(!sd) return;
+    const capAst=safeParse(q.cap||'1'); if(!capAst) return;
+    let cd; try{ cd=inferUnit(capAst,unitOf); }catch(e){ out.push('방정식 '+(i+1)+' 좌변 계수: '+e.message); return; }
+    if(!cd) return;
+    const exp=dimAdd(dimAdd(cd,sd,1),[0,0,1,0],-1);
+    q.terms.forEach((tm,j)=>{
+      if(!tm.on) return;
+      const ast=safeParse(tm.expr); if(!ast) return;
+      let d; try{ d=inferUnit(ast,unitOf); }catch(e){ out.push('방정식 '+(i+1)+' 항 '+(j+1)+': '+e.message); return; }
+      if(d&&!d.any&&!dimEq(d,exp)) out.push('방정식 '+(i+1)+' 항 '+(j+1)+': '+unitText(exp)+' 이어야 하는데 '+unitText(d)+' 입니다');
+    });
+  });
+  return out;
 }
 /* @core-end */
 function computeExps(C,P,main,warns){
@@ -1287,6 +1598,33 @@ function niceTicks(lo,hi,n){
   return out;
 }
 function decadeTicks(lo,hi){ const out=[]; for(let e=Math.round(Math.log10(lo));e<=Math.round(Math.log10(hi));e++) out.push(Math.pow(10,e)); return out; }
+/* ---- 그래프 레이아웃 → SVG 문자열. 캔버스와 같은 자료(d)를 받아 같은 배치로 그린다 ----
+   d = {W,H,L,Tp,pw,ph,xmin,xmax,ymin,ymax,logY,xTicks,yTicks,xLabel,events,series:[{T,y,color,w,dash}],marks:[{color,pts:[{t,y}]}],colors:{bg,text,muted,grid,border}} */
+const escXml=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function plotToSvg(d){
+  const {W,H,L,Tp,pw,ph,xmin,xmax,ymin,ymax,logY}=d; const c=d.colors||{};
+  const r=v=>+(+v).toFixed(2);
+  const X=t=>L+(t-xmin)/((xmax-xmin)||1)*pw;
+  const lg=Math.log10;
+  const Yf=logY?v=>Tp+(1-(lg(v)-lg(ymin))/((lg(ymax)-lg(ymin))||1))*ph:v=>Tp+(1-(v-ymin)/((ymax-ymin)||1))*ph;
+  const ok=v=>isFinite(v)&&!(logY&&v<=0);
+  const o=['<svg xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+H+'" viewBox="0 0 '+W+' '+H+'" font-family="ui-monospace,Menlo,Consolas,monospace" font-size="11">'];
+  o.push('<rect width="'+W+'" height="'+H+'" fill="'+escXml(c.bg||'#fff')+'"/>');
+  o.push('<g stroke="'+escXml(c.grid||'#ddd')+'" stroke-width="1" fill="'+escXml(c.muted||'#667')+'">');
+  (d.yTicks||[]).forEach(v=>{ const y=r(Yf(v)); if(y<Tp-1||y>Tp+ph+1) return; o.push('<line x1="'+L+'" y1="'+y+'" x2="'+r(L+pw)+'" y2="'+y+'"/><text x="'+(L-6)+'" y="'+y+'" text-anchor="end" dominant-baseline="middle" stroke="none">'+escXml(fmt(v,3))+'</text>'); });
+  (d.xTicks||[]).forEach(t=>{ const x=r(X(t)); o.push('<line x1="'+x+'" y1="'+Tp+'" x2="'+x+'" y2="'+r(Tp+ph)+'"/><text x="'+x+'" y="'+r(Tp+ph+6)+'" text-anchor="middle" dominant-baseline="hanging" stroke="none">'+escXml(fmt(t,3))+'</text>'); });
+  o.push('<text x="'+r(L+pw/2)+'" y="'+r(Tp+ph+21)+'" text-anchor="middle" dominant-baseline="hanging" stroke="none">'+escXml(d.xLabel||'')+'</text></g>');
+  o.push('<rect x="'+L+'" y="'+Tp+'" width="'+r(pw)+'" height="'+r(ph)+'" fill="none" stroke="'+escXml(c.border||'#ccc')+'"/>');
+  if(d.events&&d.events.length) o.push('<g fill="'+escXml(c.muted||'#667')+'">'+d.events.map(te=>{ const x=X(te); if(x<L||x>L+pw) return ''; const b=r(Tp+ph); return '<path d="M'+r(x-3.5)+' '+b+'L'+r(x+3.5)+' '+b+'L'+r(x)+' '+r(b-7)+'Z"/>'; }).join('')+'</g>');
+  o.push('<clipPath id="plotclip"><rect x="'+L+'" y="'+Tp+'" width="'+r(pw)+'" height="'+r(ph)+'"/></clipPath><g clip-path="url(#plotclip)" fill="none" stroke-linejoin="round">');
+  (d.series||[]).forEach(s=>{
+    const pts=[]; for(let k=0;k<s.T.length;k++){ const v=s.y[k]; if(!ok(v)) continue; pts.push(r(X(s.T[k]))+','+r(Yf(v))); }
+    o.push('<polyline points="'+pts.join(' ')+'" stroke="'+escXml(s.color)+'" stroke-width="'+(s.w||2)+'"'+(s.dash?' stroke-dasharray="'+s.dash.join(' ')+'"':'')+'/>');
+  });
+  (d.marks||[]).forEach(m=>{ o.push('<g fill="'+escXml(m.color)+'" stroke="none">'+m.pts.filter(p=>ok(p.y)).map(p=>'<circle cx="'+r(X(p.t))+'" cy="'+r(Yf(p.y))+'" r="3.6"/>').join('')+'</g>'); });
+  o.push('</g></svg>');
+  return o.join('\n');
+}
 /* @core-end */
 const sweepColor=f=>'hsl('+(215-185*f)+' 75% 55%)';
 function drawPlot(){
@@ -1849,8 +2187,29 @@ function openDialog(title,text,opt){
 }
 function closeDialog(){ $('#overlay').hidden=true; dlgApply=null; }
 
-function genPython(){
+/* @core-start: 코드 내보내기 (Python · R · Julia · SBML) */
+// 내보내기 공통 정보: 상태·상수·식 변수(의존 순서)·투약 이벤트(현재 상수 값으로 수치화)
+function exportInfo(){
   const C=compile();
+  const states=M.eqs.map(q=>q.state);
+  const params=M.vars.filter(v=>v.kind==='param');
+  const funcVars=new Map(); M.vars.forEach(v=>{ if(v.kind==='func'){ try{ funcVars.set(v.name,parse(v.expr)); }catch(e){} } });
+  const order=[],mark=new Set();
+  const visit=n=>{ if(mark.has(n)) return; mark.add(n); collectVars(funcVars.get(n)).forEach(d=>{ if(funcVars.has(d)) visit(d); }); order.push(n); };
+  funcVars.forEach((_,n)=>visit(n));
+  const doses=M.doses.filter(d=>d.on&&M.eqs.some(q=>q.state===d.target));
+  let events=[];
+  if(!C.errors.length){
+    const P0={}; params.forEach(v=>{ P0[v.name]=num(v.value); });
+    const Z=new Array(M.eqs.length).fill(0);
+    const E=makeEvents(C,P0,M.eqs.length,num(M.sim.t0),num(M.sim.tEnd));
+    events=E.ev.map(e=>({t:e.t,i:e.i,state:states[e.i],add:e.amt/C.caps[e.i](e.t,Z,P0)}));
+  }
+  return {C,states,params,funcVars,order,doses,events};
+}
+const codeNum=v=>{ const s=String(v); return /[.e]/i.test(s)||!Number.isFinite(v)?s:s+'.0'; };
+function genPython(){
+  const X=exportInfo(),C=X.C;
   if(C.errors.length) return '# 식에 오류가 있어 코드를 만들 수 없습니다\n# '+C.errors.join('\n# ');
   const KW=new Set(['False','None','True','and','as','assert','async','await','break','class','continue','def','del','elif','else','except','finally','for','from','global','if','import','in','is','lambda','nonlocal','not','or','pass','raise','return','try','while','with','yield','np','solve_ivp','plt','sol','rhs','caps','y','k','events','apply']);
   const pn=n=>KW.has(n)?n+'_':n;
@@ -1861,16 +2220,12 @@ function genPython(){
     return PYF[name]+'('+args.join(', ')+')';
   }};
   const px=a=>toText(a,0,o);
-  const funcVars=new Map(); M.vars.forEach(v=>{ if(v.kind==='func') funcVars.set(v.name,parse(v.expr)); });
-  const order=[],mark=new Set();
-  const visit=n=>{ if(mark.has(n)) return; mark.add(n); collectVars(funcVars.get(n)).forEach(d=>{ if(funcVars.has(d)) visit(d); }); order.push(n); };
-  funcVars.forEach((_,n)=>visit(n));
-  const states=stateNames();
+  const states=X.states;
   const unpack='    '+states.map(pn).join(', ')+(states.length===1?',':'')+' = y';
-  const fv=()=>order.map(n=>'    '+pn(n)+' = '+px(funcVars.get(n)));
-  const doses=M.doses.filter(d=>d.on&&M.eqs.some(q=>q.state===d.target));
+  const fv=()=>X.order.map(n=>'    '+pn(n)+' = '+px(X.funcVars.get(n)));
+  const doses=X.doses;
   const L=['import numpy as np','from scipy.integrate import solve_ivp','import matplotlib.pyplot as plt','','# ── 상수 ──'];
-  M.vars.filter(v=>v.kind==='param').forEach(v=>L.push(pn(v.name)+' = '+v.value+(v.unit?'   # '+v.unit:'')));
+  X.params.forEach(v=>L.push(pn(v.name)+' = '+v.value+(v.unit?'   # '+v.unit:'')));
   L.push('','# ── 미분방정식: y = ['+states.join(', ')+'] ──','def rhs(t, y):',unpack,...fv());
   M.eqs.forEach(q=>{
     const parts=q.terms.filter(tm=>tm.on).map(tm=>(tm.sign<0?'- ':'+ ')+'('+px(parse(tm.expr))+')');
@@ -1900,6 +2255,140 @@ function genPython(){
   L.push('plt.xlabel("t ['+(M.sim.tunit||'')+']"); plt.legend(); plt.grid(alpha=.3); plt.show()');
   return L.join('\n');
 }
+function genR(){
+  const X=exportInfo(),C=X.C;
+  if(C.errors.length) return '# 식에 오류가 있어 코드를 만들 수 없습니다\n# '+C.errors.join('\n# ');
+  const KW=new Set(['if','else','repeat','while','function','for','next','break','TRUE','FALSE','NULL','Inf','NaN','NA','in','t','y','p','pars','rhs','out','times','y0','eventdat','state']);
+  const pn=n=>KW.has(n)?n+'_':n;
+  const RF={exp:'exp',ln:'log',log10:'log10',sqrt:'sqrt',abs:'abs',sin:'sin',cos:'cos',tan:'tan',tanh:'tanh',floor:'floor',ceil:'ceiling'};
+  const o={pow:'^',v:n=>n==='t'?'t':n==='pi'?'pi':pn(n),fn:(name,args)=>{
+    if(name==='step') return 'ifelse(('+args[0]+') >= 0, 1, 0)';
+    if(name==='mod') return '(('+args[0]+') %% ('+args[1]+'))';
+    if(name==='min'||name==='max') return name+'('+args.join(', ')+')';
+    return RF[name]+'('+args.join(', ')+')';
+  }};
+  const px=a=>toText(a,0,o);
+  const L=['library(deSolve)','','# ── 상수 ──','pars <- c('];
+  X.params.forEach((v,i)=>L.push('  '+pn(v.name)+' = '+v.value+(i<X.params.length-1?',':'')+(v.unit?'   # '+v.unit:'')));
+  L.push(')','');
+  L.push('# ── 미분방정식: y = c('+X.states.join(', ')+') ──','rhs <- function(t, y, p) {','  with(as.list(c(y, p)), {');
+  X.order.forEach(n=>L.push('    '+pn(n)+' <- '+px(X.funcVars.get(n))));
+  M.eqs.forEach(q=>{
+    const parts=q.terms.filter(tm=>tm.on).map(tm=>(tm.sign<0?'- ':'+ ')+'('+px(parse(tm.expr))+')');
+    L.push('    d_'+pn(q.state)+' <- ('+(parts.join(' ')||'0')+') / ('+px(parse(q.cap||'1'))+')');
+  });
+  L.push('    list(c('+X.states.map(s=>'d_'+pn(s)).join(', ')+'))','  })','}','');
+  L.push('y0 <- c('+M.eqs.map(q=>pn(q.state)+' = '+q.ic).join(', ')+')');
+  L.push('times <- seq('+M.sim.t0+', '+M.sim.tEnd+', length.out = 401)   # '+(M.sim.tunit||''));
+  if(X.events.length){
+    L.push('','# ── 투약 이벤트: 시각마다 상태에 양(투여량 ÷ 좌변 계수)을 더함 ──');
+    L.push('eventdat <- data.frame(','  var = c('+X.events.map(e=>'"'+pn(e.state)+'"').join(', ')+'),','  time = c('+X.events.map(e=>e.t).join(', ')+'),','  value = c('+X.events.map(e=>e.add).join(', ')+'),','  method = "add"',')');
+    L.push('times <- sort(unique(c(times, eventdat$time)))');
+    L.push('out <- ode(y = y0, times = times, func = rhs, parms = pars, method = "lsoda", rtol = 1e-8, atol = 1e-10,','           events = list(data = eventdat))');
+  }else L.push('out <- ode(y = y0, times = times, func = rhs, parms = pars, method = "lsoda", rtol = 1e-8, atol = 1e-10)');
+  L.push('','matplot(out[, 1], out[, -1, drop = FALSE], type = "l", lty = 1, xlab = "t ['+(M.sim.tunit||'')+']", ylab = "")');
+  L.push('legend("topright", legend = colnames(out)[-1], col = seq_len(ncol(out) - 1), lty = 1, bty = "n")');
+  return L.join('\n');
+}
+function genJulia(){
+  const X=exportInfo(),C=X.C;
+  if(C.errors.length) return '# 식에 오류가 있어 코드를 만들 수 없습니다\n# '+C.errors.join('\n# ');
+  const KW=new Set(['begin','end','if','else','elseif','for','while','function','return','let','do','try','catch','finally','module','using','import','struct','mutable','abstract','type','macro','quote','local','global','const','true','false','in','isa','where','pi','du','u','p','t','prob','sol','cb']);
+  const pn=n=>KW.has(n)?n+'_':n;
+  const JF={exp:'exp',ln:'log',log10:'log10',sqrt:'sqrt',abs:'abs',sin:'sin',cos:'cos',tan:'tan',tanh:'tanh',floor:'floor',ceil:'ceil',mod:'mod',min:'min',max:'max'};
+  const o={pow:'^',v:n=>n==='t'?'t':n==='pi'?'pi':pn(n),fn:(name,args)=>{
+    if(name==='step') return '(('+args[0]+') >= 0 ? 1.0 : 0.0)';
+    return JF[name]+'('+args.join(', ')+')';
+  }};
+  const px=a=>toText(a,0,o);
+  const L=['using DifferentialEquations, Plots','','# ── 상수 ──'];
+  L.push(X.params.length?'p = (':'p = NamedTuple()');
+  if(X.params.length){ X.params.forEach(v=>L.push('  '+pn(v.name)+' = '+codeNum(num(v.value))+','+(v.unit?'   # '+v.unit:''))); L.push(')'); }
+  L.push('','# ── 미분방정식: u = ['+X.states.join(', ')+'] ──','function rhs!(du, u, p, t)');
+  X.states.forEach((s,i)=>L.push('    '+pn(s)+' = u['+(i+1)+']'));
+  X.params.forEach(v=>L.push('    '+pn(v.name)+' = p.'+pn(v.name)));
+  X.order.forEach(n=>L.push('    '+pn(n)+' = '+px(X.funcVars.get(n))));
+  M.eqs.forEach((q,i)=>{
+    const parts=q.terms.filter(tm=>tm.on).map(tm=>(tm.sign<0?'- ':'+ ')+'('+px(parse(tm.expr))+')');
+    L.push('    du['+(i+1)+'] = ('+(parts.join(' ')||'0.0')+') / ('+px(parse(q.cap||'1'))+')');
+  });
+  L.push('    return nothing','end','');
+  L.push('u0 = ['+M.eqs.map(q=>codeNum(num(q.ic))).join(', ')+']');
+  L.push('tspan = ('+codeNum(num(M.sim.t0))+', '+codeNum(num(M.sim.tEnd))+')   # '+(M.sim.tunit||''));
+  L.push('prob = ODEProblem(rhs!, u0, tspan, p)');
+  if(X.events.length){
+    // (상태, 더하는 양) 이 같은 이벤트는 시각 목록 하나로 묶는다
+    const groups=new Map(); X.events.forEach(e=>{ const k=e.i+'|'+e.add; if(!groups.has(k)) groups.set(k,{i:e.i,add:e.add,ts:[]}); groups.get(k).ts.push(e.t); });
+    L.push('','# ── 투약 이벤트: 시각마다 상태에 양(투여량 ÷ 좌변 계수)을 더함 ──','cbs = [');
+    groups.forEach(g=>L.push('  PresetTimeCallback(['+g.ts.map(codeNum).join(', ')+'], integ -> (integ.u['+(g.i+1)+'] += '+codeNum(g.add)+')),'));
+    L.push(']','cb = CallbackSet(cbs...)','sol = solve(prob, Rodas5P(), callback = cb, reltol = 1e-8, abstol = 1e-10)');
+  }else L.push('sol = solve(prob, Rodas5P(), reltol = 1e-8, abstol = 1e-10)');
+  L.push('plot(sol, label = ['+X.states.map(s=>'"'+s+'"').join(' ')+'], xlabel = "t ['+(M.sim.tunit||'')+']")');
+  return L.join('\n');
+}
+// SBML Level 3 Version 2: 구획 1개, 상태 = species(rateRule), 상수 = parameter, 식 변수 = assignmentRule, 투약 = event
+function mathML(n){
+  switch(n.t){
+    case 'num': { const s=String(n.v); if(/e/i.test(s)){ const [m,e]=s.split(/e/i); return '<cn type="e-notation">'+m+'<sep/>'+parseInt(e,10)+'</cn>'; } return '<cn>'+s+'</cn>'; }
+    case 'var': if(n.n==='t') return '<csymbol encoding="text" definitionURL="http://www.sbml.org/sbml/symbols/time">t</csymbol>'; if(n.n==='pi') return '<pi/>'; return '<ci>'+n.n+'</ci>';
+    case 'neg': return '<apply><minus/>'+mathML(n.a)+'</apply>';
+    case 'fn': {
+      const A=n.args.map(mathML);
+      switch(n.n){
+        case 'exp': case 'ln': case 'abs': case 'sin': case 'cos': case 'tan': case 'tanh': case 'floor': return '<apply><'+n.n+'/>'+A[0]+'</apply>';
+        case 'ceil': return '<apply><ceiling/>'+A[0]+'</apply>';
+        case 'log10': return '<apply><log/><logbase><cn>10</cn></logbase>'+A[0]+'</apply>';
+        case 'sqrt': return '<apply><root/>'+A[0]+'</apply>';
+        case 'min': case 'max': return '<apply><'+n.n+'/>'+A.join('')+'</apply>';
+        case 'step': return '<piecewise><piece><cn>1</cn><apply><geq/>'+A[0]+'<cn>0</cn></apply></piece><otherwise><cn>0</cn></otherwise></piecewise>';
+        case 'mod': return '<apply><minus/>'+A[0]+'<apply><times/>'+A[1]+'<apply><floor/><apply><divide/>'+A[0]+A[1]+'</apply></apply></apply></apply>';
+      }
+      return A[0];
+    }
+    default: { const OP={'+':'plus','-':'minus','*':'times','/':'divide','^':'power'}; return '<apply><'+OP[n.op]+'/>'+mathML(n.a)+mathML(n.b)+'</apply>'; }
+  }
+}
+function genSBML(){
+  const X=exportInfo(),C=X.C;
+  if(C.errors.length) return '<!-- 식에 오류가 있어 SBML을 만들 수 없습니다: '+escXml(C.errors.join('; '))+' -->';
+  const MM='<math xmlns="http://www.w3.org/1998/Math/MathML">';
+  const L=['<?xml version="1.0" encoding="UTF-8"?>','<sbml xmlns="http://www.sbml.org/sbml/level3/version2/core" level="3" version="2">',
+    '  <model id="ode_builder_model" name="'+escXml(M.info&&M.info.title?M.info.title:'수식 빌더 모델')+'">',
+    '    <listOfCompartments>','      <compartment id="body" spatialDimensions="3" size="1" constant="true"/>','    </listOfCompartments>','    <listOfSpecies>'];
+  M.eqs.forEach(q=>L.push('      <species id="'+q.state+'" compartment="body" initialAmount="'+num(q.ic)+'" hasOnlySubstanceUnits="true" boundaryCondition="true" constant="false"'+(q.unit?' name="'+escXml(q.state+' ['+q.unit+']')+'"':'')+'/>'));
+  L.push('    </listOfSpecies>');
+  if(X.params.length||X.order.length){
+    L.push('    <listOfParameters>');
+    X.params.forEach(v=>L.push('      <parameter id="'+v.name+'" value="'+num(v.value)+'" constant="true"'+(v.unit?' name="'+escXml(v.name+' ['+v.unit+']')+'"':'')+'/>'));
+    X.order.forEach(n=>L.push('      <parameter id="'+n+'" constant="false"/>'));
+    L.push('    </listOfParameters>');
+  }
+  L.push('    <listOfRules>');
+  X.order.forEach(n=>L.push('      <assignmentRule variable="'+n+'">'+MM+mathML(X.funcVars.get(n))+'</math></assignmentRule>'));
+  M.eqs.forEach(q=>{
+    let rhs=null;
+    q.terms.filter(tm=>tm.on).forEach(tm=>{
+      const a=parse(tm.expr);
+      if(!rhs) rhs=tm.sign<0?{t:'neg',a}:a; else rhs={t:'bin',op:tm.sign<0?'-':'+',a:rhs,b:a};
+    });
+    if(!rhs) rhs={t:'num',v:0};
+    const cap=parse(q.cap||'1');
+    if(!(cap.t==='num'&&cap.v===1)) rhs={t:'bin',op:'/',a:rhs,b:cap};
+    L.push('      <rateRule variable="'+q.state+'">'+MM+mathML(rhs)+'</math></rateRule>');
+  });
+  L.push('    </listOfRules>');
+  if(X.events.length){
+    const MAXEV=1000; const ev=X.events.slice(0,MAXEV);
+    L.push('    <listOfEvents>');
+    ev.forEach((e,k)=>L.push('      <event id="dose_'+(k+1)+'" useValuesFromTriggerTime="true"><trigger initialValue="'+(e.t>num(M.sim.t0)?'true':'false')+'" persistent="true">'+MM+'<apply><geq/>'+mathML({t:'var',n:'t'})+'<cn>'+e.t+'</cn></apply></math></trigger>'+
+      '<listOfEventAssignments><eventAssignment variable="'+e.state+'">'+MM+'<apply><plus/><ci>'+e.state+'</ci><cn>'+e.add+'</cn></apply></math></eventAssignment></listOfEventAssignments></event>'));
+    if(X.events.length>MAXEV) L.push('      <!-- 투약 이벤트가 '+X.events.length+'개라 처음 '+MAXEV+'개만 넣었습니다 -->');
+    L.push('    </listOfEvents>');
+  }
+  L.push('  </model>','</sbml>');
+  return L.join('\n');
+}
+/* @core-end */
 function genCsv(){
   const R=S.result; if(!R) return '결과가 없습니다. 식 오류를 먼저 고쳐 주세요.';
   const rows=[['t'].concat(stateNames()).join(',')];

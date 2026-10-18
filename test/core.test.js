@@ -12,7 +12,9 @@ function loadCore() {
   const blocks = [...html.matchAll(/\/\* @core-start[^*]*\*\/([\s\S]*?)\/\* @core-end \*\//g)].map((m) => m[1]);
   assert.ok(blocks.length >= 4, '@core 블록이 4개 이상 있어야 한다');
   const names = ['num', 'fmt', 'tokenize', 'parse', 'mapVars', 'collectVars', 'flatten', 'toText', 'autoLatex', 'texNum', 'toTex',
-    'compile', 'integrate', 'makeEvents', 'integrateEvents', 'interp1', 'parseData', 'cmpMetrics', 'windowStats', 'interp', 'niceTicks', 'decadeTicks'];
+    'compile', 'integrate', 'integrateStiff', 'makeEvents', 'integrateEvents', 'interp1', 'parseData', 'cmpMetrics', 'windowStats', 'interp', 'niceTicks', 'decadeTicks',
+    'nelderMead', 'nelderMeadIter', 'fitProblem', 'parseUnit', 'unitText', 'inferUnit', 'checkUnits',
+    'b64urlEncode', 'b64urlDecode', 'encodeShare', 'decodeShare', 'plotToSvg', 'genPython', 'genR', 'genJulia', 'genSBML'];
   const src = '(function(M){"use strict";\n' + blocks.join('\n') + '\nreturn {' + names.join(',') + '};\n})';
   const factory = vm.runInThisContext(src, { filename: 'index.html#core' });
   return (M) => factory(M);
@@ -287,4 +289,307 @@ test('niceTicks / decadeTicks', () => {
   assert.deepEqual(K.niceTicks(0, 7, 5), [0, 1, 2, 3, 4, 5, 6, 7]);
   assert.deepEqual(K.niceTicks(3, 3, 5), [3]);
   assert.deepEqual(K.decadeTicks(0.01, 100), [0.01, 0.1, 1, 10, 100]);
+});
+
+/* ---------- 강성 적분기 (Rodas3) · 자동 전환 ---------- */
+test('integrateStiff: y\' = -1000(y - cos t) 가 해석해와 1e-4 이내 (3차 정확도)', () => {
+  const lam = 1000;
+  const exact = (t) => (lam * lam * Math.cos(t) + lam * Math.sin(t)) / (1 + lam * lam) - lam * lam / (1 + lam * lam) * Math.exp(-lam * t);
+  const f = (t, y) => [-lam * (y[0] - Math.cos(t))];
+  const r = K.integrateStiff(f, {}, [0], 0, 2, 1e-6, 400);
+  assert.equal(r.warn, null);
+  assert.equal(r.T[r.T.length - 1], 2);
+  for (let i = 0; i < r.T.length; i++) near(r.Y[i][0], exact(r.T[i]), 1e-4, 't=' + r.T[i]);
+  assert.ok(r.T.length < 2000, '스텝 수가 명시적 방법보다 훨씬 적어야 한다: ' + r.T.length);
+  // 고정 최대 스텝(div)을 반으로 줄이면 오차가 약 1/8 (3차)
+  const e = (div) => Math.abs(K.integrateStiff((t, y) => [-y[0]], {}, [1], 0, 1, 1e-1, div).Y.at(-1)[0] - Math.exp(-1));
+  const ratio = e(100) / e(200);
+  assert.ok(ratio > 5 && ratio < 12, '오차 비 ' + ratio);
+});
+
+test('integrateStiff: Robertson 문제가 빠르게 끝나고 참고값과 맞는다', () => {
+  const rob = (t, y) => [-0.04 * y[0] + 1e4 * y[1] * y[2], 0.04 * y[0] - 1e4 * y[1] * y[2] - 3e7 * y[1] * y[1], 3e7 * y[1] * y[1]];
+  const t0 = Date.now();
+  const r = K.integrateStiff(rob, {}, [1, 0, 0], 0, 40, 1e-6, 400);
+  assert.ok(Date.now() - t0 < 2000, '2초 안에 끝나야 한다');
+  assert.equal(r.warn, null);
+  const L = r.Y[r.Y.length - 1];
+  near(L[0], 0.7158270687, 1e-5, 'y1'); near(L[1], 9.185534764e-6, 1e-8, 'y2'); near(L[2], 0.2841637457, 1e-5, 'y3');
+  near(L[0] + L[1] + L[2], 1, 1e-8, '질량 보존');
+});
+
+test('integrateEvents: 자동 모드는 강성이 감지되면 강성 적분기로 바꾸고 stiff 를 돌려준다', () => {
+  const lam = 1e5;
+  const exact = (t) => (lam * lam * Math.cos(t) + lam * Math.sin(t)) / (1 + lam * lam) - lam * lam / (1 + lam * lam) * Math.exp(-lam * t);
+  const C = { f: (t, y) => [-lam * (y[0] - Math.cos(t))], caps: [() => 1], doseFns: [] };
+  const t0 = Date.now();
+  const r = K.integrateEvents(C, {}, [0], 0, 2, 1e-6, []);
+  assert.ok(Date.now() - t0 < 3000);
+  assert.equal(r.warn, null);
+  assert.equal(r.stiff, true);
+  for (let i = 0; i < r.T.length; i += 3) near(r.Y[i][0], exact(r.T[i]), 1e-4, 't=' + r.T[i]);
+  // 명시적 전용은 강성 감지를 하지 않는다 (스텝 상한까지 돌거나 끝남)
+  const re = K.integrate(C.f, {}, [0], 0, 2, 1e-6, 400, { detect: true, maxSteps: 1000 });
+  assert.ok(re.code === 'stiff' || re.code === 'steps');
+  const ok = K.integrateEvents(C, {}, [0], 0, 2, 1e-6, [], 'explicit');
+  assert.equal(ok.stiff, false);
+  // 비강성 문제는 자동 모드에서도 명시적 방법으로 끝난다
+  const r2 = K.integrateEvents({ f: (t, y) => [-0.7 * y[0]], caps: [() => 1], doseFns: [] }, {}, [1], 0, 5, 1e-8, []);
+  assert.equal(r2.stiff, false);
+  near(r2.Y.at(-1)[0], Math.exp(-3.5), 1e-6);
+  // 'stiff' 를 지정하면 투약이 있어도 강성 적분기로 계산한다
+  const r3 = K.integrateEvents({ f: (t, y) => [-0.7 * y[0]], caps: [() => 1], doseFns: [] }, {}, [0], 0, 2, 1e-8, [{ t: 0, i: 0, amt: 1 }, { t: 1, i: 0, amt: 1 }], 'stiff');
+  assert.equal(r3.stiff, true);
+  near(r3.Y.at(-1)[0], Math.exp(-1.4) + Math.exp(-0.7), 1e-6);
+});
+
+/* ---------- Nelder–Mead · 파라미터 추정 ---------- */
+test('nelderMead: 2차 함수와 Rosenbrock 함수의 최소점으로 수렴', () => {
+  const q = K.nelderMead((x) => (x[0] - 3) ** 2 + 2 * (x[1] + 1) ** 2 + 5, [0, 0], { maxIter: 500, tol: 1e-14, xtol: 1e-9 });
+  near(q.x[0], 3, 1e-6); near(q.x[1], -1, 1e-6); near(q.fx, 5, 1e-10);
+  const rosen = (x) => 100 * (x[1] - x[0] * x[0]) ** 2 + (1 - x[0]) ** 2;
+  const r = K.nelderMead(rosen, [-1.2, 1], { maxIter: 5000, tol: 1e-14, xtol: 1e-8 });
+  near(r.x[0], 1, 1e-4); near(r.x[1], 1, 1e-4);
+  assert.ok(r.iter < 5000, '반복 상한 전에 수렴');
+  // 반복자: onIter 가 false 를 돌려주면 멈춘다
+  let n = 0;
+  const s = K.nelderMead(rosen, [-1.2, 1], { maxIter: 5000, onIter: () => ++n < 10 });
+  assert.equal(n, 10); assert.equal(s.iter, 10);
+  const it = K.nelderMeadIter(rosen, [0, 0], { maxIter: 3 });
+  assert.equal(it.next().done, false); it.next(); it.next();
+  assert.equal(it.next().done, true);
+});
+
+test('fitProblem: 1구획 경구 모델의 ka, CL 을 실측 데이터로 복원', () => {
+  const ka0 = 1.3, CL0 = 2.5, V = 10, D = 100;
+  const data = [];
+  for (const t of [0.5, 1, 2, 4, 6, 8, 12, 18, 24]) {
+    const ke = CL0 / V;
+    data.push(t + ', ' + (D * ka0 / (V * (ka0 - ke)) * (Math.exp(-ke * t) - Math.exp(-ka0 * t))));
+  }
+  const mk = (ka, CL) => model({
+    vars: [Object.assign(pv('ka', ka), { min: 0.05, max: 5, log: true }), Object.assign(pv('CL', CL), { min: 0.2, max: 20 }), pv('V', V), pv('D', D)],
+    eqs: [
+      { state: 'A', cap: '1', ic: 0, terms: [{ sign: -1, on: true, expr: 'ka*A' }] },
+      { state: 'C', cap: 'V', ic: 0, terms: [{ sign: 1, on: true, expr: 'ka*A' }, { sign: -1, on: true, expr: 'CL*C' }] },
+    ],
+    doses: [{ on: true, target: 'A', amt: 'D', start: '0', tau: '24', n: '1' }],
+    cmps: [{ on: true, label: '실측', sim: 'C', kind: 'data', ref: '', data: data.join('\n') }, { on: true, label: '꺼진 기준식은 무시', sim: 'C', kind: 'ref', ref: '0', data: '' }],
+    sim: { t0: 0, tEnd: 24, tunit: 'h', rtol: 1e-7 },
+  });
+  const Mx = mk(0.3, 8);
+  const Kx = make(Mx);
+  const F = Kx.fitProblem(Kx.compile(), ['ka', 'CL'], [true, false]);
+  assert.deepEqual(F.logScale, [true, false]);
+  const before = F.evaluate(F.toParams(F.x0));
+  assert.ok(before.loss > 1);
+  const r = Kx.nelderMead(F.loss, F.x0, { step: 0.15, maxIter: 300, tol: 1e-12, xtol: 1e-5 });
+  const vals = F.toValues(r.x);
+  near(vals[0], ka0, 2e-3, 'ka'); near(vals[1], CL0, 5e-3, 'CL');
+  const after = F.evaluate(F.toParams(r.x));
+  assert.ok(after.loss < 1e-6, 'loss ' + after.loss);
+  assert.equal(after.sets.length, 1);
+  assert.ok(after.sets[0].met.maxR < 0.5);
+  // 경계 밖은 벌점으로 커진다
+  assert.ok(F.loss([2, 0.5]) > F.loss([1, 0.5]));
+  // 실측 데이터 비교가 없으면 오류
+  const none = mk(1, 2); none.cmps = [];
+  assert.throws(() => make(none).fitProblem(make(none).compile(), ['ka'], []), /실측 데이터/);
+  assert.throws(() => Kx.fitProblem(Kx.compile(), ['nope'], []), /상수 변수/);
+});
+
+/* ---------- 단위 검사 ---------- */
+test('parseUnit / unitText: 자주 쓰는 단위 문자열을 차원 벡터로', () => {
+  assert.deepEqual(K.parseUnit('mg'), [1, 0, 0, 0]);
+  assert.deepEqual(K.parseUnit('kg'), [1, 0, 0, 0]);
+  assert.deepEqual(K.parseUnit('L'), [0, 1, 0, 0]);
+  assert.deepEqual(K.parseUnit('mL'), [0, 1, 0, 0]);
+  assert.deepEqual(K.parseUnit('h'), [0, 0, 1, 0]);
+  assert.deepEqual(K.parseUnit('min'), [0, 0, 1, 0]);
+  assert.deepEqual(K.parseUnit('µM'), [0, -1, 0, 1]);
+  assert.deepEqual(K.parseUnit('uM'), [0, -1, 0, 1]);
+  assert.deepEqual(K.parseUnit('1/h'), [0, 0, -1, 0]);
+  assert.deepEqual(K.parseUnit('h^-1'), [0, 0, -1, 0]);
+  assert.deepEqual(K.parseUnit('h-1'), [0, 0, -1, 0]);
+  assert.deepEqual(K.parseUnit('mg/L'), [1, -1, 0, 0]);
+  assert.deepEqual(K.parseUnit('L/h'), [0, 1, -1, 0]);
+  assert.deepEqual(K.parseUnit('mg/L/h'), [1, -1, -1, 0]);
+  assert.deepEqual(K.parseUnit('L/h/kg'), [-1, 1, -1, 0]);
+  assert.deepEqual(K.parseUnit('ng·h/mL'), [1, -1, 1, 0]);
+  assert.deepEqual(K.parseUnit('µM·h'), [0, -1, 1, 1]);
+  assert.deepEqual(K.parseUnit('mg/kg'), [0, 0, 0, 0]);
+  assert.deepEqual(K.parseUnit('-'), [0, 0, 0, 0]);
+  assert.deepEqual(K.parseUnit('%BW'), [0, 0, 0, 0]);
+  assert.deepEqual(K.parseUnit('회'), [0, 0, 0, 0]);
+  assert.equal(K.parseUnit(''), null, '빈 단위는 모름');
+  assert.equal(K.parseUnit('furlong'), null);
+  assert.equal(K.parseUnit('mg/zz'), null);
+  assert.equal(K.unitText([1, -1, -1, 0]), 'mg/L/h');
+  assert.equal(K.unitText([0, 0, -1, 0]), '1/h');
+  assert.equal(K.unitText([0, 0, 0, 0]), '-');
+  assert.equal(K.unitText([1, 0, 1, 0]), 'mg·h');
+  assert.equal(K.unitText([0, 2, 0, 0]), 'L^2');
+});
+
+test('inferUnit: 사칙연산·거듭제곱·함수 규칙', () => {
+  const U = { Q: K.parseUnit('L/h'), C: K.parseUnit('mg/L'), V: K.parseUnit('L'), k: K.parseUnit('1/h'), Kp: K.parseUnit('-'), A: K.parseUnit('mg') };
+  const inf = (s) => K.inferUnit(K.parse(s), (n) => U[n] || null);
+  assert.deepEqual(inf('Q*(C - C/Kp)'), [1, 0, -1, 0]);
+  assert.deepEqual(inf('A/V'), [1, -1, 0, 0]);
+  assert.deepEqual(inf('V^2'), [0, 2, 0, 0]);
+  assert.deepEqual(inf('V^-1'), [0, -1, 0, 0]);
+  assert.deepEqual(inf('sqrt(V^2)'), [0, 1, 0, 0]);
+  assert.deepEqual(inf('exp(-k*t)'), [0, 0, 0, 0]);
+  assert.deepEqual(inf('k*t + 1'), [0, 0, 0, 0]);
+  assert.deepEqual(inf('min(A, 2*A)'), [1, 0, 0, 0]);
+  assert.deepEqual(inf('abs(-A)'), [1, 0, 0, 0]);
+  assert.deepEqual(inf('step(t - 24)*A'), [1, 0, 0, 0]);
+  assert.deepEqual(inf('Q*(t - 24)'), [0, 1, 0, 0], '숫자는 어느 단위든 될 수 있다');
+  assert.deepEqual(inf('A*(1 + 2)'), [1, 0, 0, 0]);
+  assert.equal(inf('3').any, true);
+  assert.equal(inf('Q*2').any, undefined);
+  assert.deepEqual(inf('min(A, 1e-9)'), [1, 0, 0, 0]);
+  assert.equal(inf('A*zz'), null, '모르는 변수가 곱해지면 모름');
+  assert.deepEqual(inf('A + zz'), [1, 0, 0, 0], '덧셈은 아는 쪽의 단위');
+  assert.equal(inf('A^Kp'), null, '지수가 수가 아니면 모름');
+  assert.throws(() => inf('A + V'), /단위가 다릅니다/);
+  assert.throws(() => inf('exp(A)'), /무차원/);
+  assert.throws(() => inf('A^V'), /지수는 무차원/);
+  assert.throws(() => inf('min(A, V)'), /서로 다릅니다/);
+});
+
+test('checkUnits: 방정식 항의 단위가 좌변과 다르면 경고, 모르는 단위는 건너뜀', () => {
+  const pvu = (name, value, unit) => Object.assign(pv(name, value), { unit });
+  const good = model({
+    vars: [pvu('V_h', 1.5, 'L'), pvu('Q_h', 90, 'L/h'), pvu('C_b', 10, 'mg/L'), pvu('Kp_h', 5, '-'), pvu('CL_int', 30, 'L/h')],
+    eqs: [{ state: 'C_h', cap: 'V_h', ic: 0, unit: 'mg/L', terms: [{ sign: 1, on: true, expr: 'Q_h*(C_b - C_h/Kp_h)' }, { sign: -1, on: true, expr: 'CL_int*(C_h/Kp_h)' }] }],
+  });
+  assert.deepEqual(make(good).checkUnits(), []);
+  const bad = model({
+    vars: [pvu('V_h', 1.5, 'L'), pvu('Q_h', 90, 'L/h'), pvu('C_b', 10, 'mg/L'), pvu('Kp_h', 5, '-'), pvu('k', 1, '1/h'), pvu('x', 1, '')],
+    eqs: [{ state: 'C_h', cap: 'V_h', ic: 0, unit: 'mg/L', terms: [
+      { sign: 1, on: true, expr: 'Q_h*(C_b - C_h/Kp_h)' },
+      { sign: -1, on: true, expr: 'k*C_h' },            // mg/L/h ≠ mg/h
+      { sign: 1, on: true, expr: 'x*C_h' },             // x 단위 모름 → 건너뜀
+      { sign: 1, on: false, expr: 'Q_h' },              // 꺼진 항 → 건너뜀
+      { sign: 1, on: true, expr: 'C_b + Q_h' },         // 덧셈 불일치
+      { sign: 1, on: true, expr: 'exp(C_b)' },          // 함수 인수
+    ] }],
+  });
+  const w = make(bad).checkUnits();
+  assert.equal(w.length, 3, w.join(' | '));
+  assert.match(w[0], /방정식 1 항 2: mg\/h 이어야 하는데 mg\/L\/h/);
+  assert.match(w[1], /방정식 1 항 5: .*단위가 다릅니다/);
+  assert.match(w[2], /방정식 1 항 6: exp\(\)의 인수는 무차원/);
+  // 식 변수의 단위가 비어 있으면 식에서 추론한다; 상태 단위를 모르면 그 방정식은 건너뛴다
+  const inferred = model({
+    vars: [pvu('CL_kg', 0.4, 'L/h/kg'), pvu('BW', 3.5, 'kg'), fv('CL', 'CL_kg*BW'), pvu('V', 10, 'L')],
+    eqs: [{ state: 'A', cap: '1', ic: 0, unit: 'mg', terms: [{ sign: -1, on: true, expr: 'CL*A/V' }, { sign: -1, on: true, expr: 'CL*A' }] },
+      { state: 'B', cap: '1', ic: 0, unit: '', terms: [{ sign: 1, on: true, expr: 'V' }] }],
+  });
+  const w2 = make(inferred).checkUnits();
+  assert.equal(w2.length, 1);
+  assert.match(w2[0], /방정식 1 항 2: mg\/h 이어야 하는데 mg·L\/h/);
+});
+
+/* ---------- 공유 링크 ---------- */
+test('encodeShare / decodeShare: 압축(z.)과 비압축(j.) 모두 왕복', async () => {
+  const obj = { vars: [{ name: 'V_h', value: 1.5, unit: 'L', note: '한글 메모 · µM' }], eqs: [{ state: 'C_h', terms: [{ expr: 'Q_h*(C_b - C_h/Kp_h)' }] }], sim: { t0: 0, tEnd: 0.5 } };
+  const z = await K.encodeShare(obj);
+  assert.match(z, /^z\.[A-Za-z0-9_-]+$/, 'Node 22 에는 CompressionStream 이 있으므로 압축 경로');
+  assert.deepEqual(await K.decodeShare(z), obj);
+  const j = 'j.' + K.b64urlEncode(new TextEncoder().encode(JSON.stringify(obj)));
+  assert.deepEqual(await K.decodeShare(j), obj);
+  assert.deepEqual([...K.b64urlDecode(K.b64urlEncode(new Uint8Array([0, 1, 2, 250, 251, 252, 253, 254, 255])))], [0, 1, 2, 250, 251, 252, 253, 254, 255]);
+  // 큰 모델은 압축이 훨씬 짧다
+  const big = { eqs: Array.from({ length: 20 }, (_, i) => ({ state: 'C_' + i, terms: [{ expr: 'Q_h*(C_b - C_' + i + '/Kp_h)' }] })) };
+  const zb = await K.encodeShare(big);
+  assert.ok(zb.length < JSON.stringify(big).length / 3, zb.length + ' vs ' + JSON.stringify(big).length);
+  await assert.rejects(() => K.decodeShare('x.abc'), /형식/);
+  await assert.rejects(() => K.decodeShare('j.' + K.b64urlEncode(new TextEncoder().encode('{bad'))));
+});
+
+/* ---------- 그래프 SVG ---------- */
+function xmlBalanced(xml) {
+  const body = xml.replace(/<\?[\s\S]*?\?>/g, '').replace(/<!--[\s\S]*?-->/g, '');
+  const stack = [];
+  for (const m of body.matchAll(/<(\/?)([A-Za-z_][\w:.-]*)[^<>]*?(\/?)>/g)) {
+    if (m[1]) { if (stack.pop() !== m[2]) return false; } else if (!m[3]) stack.push(m[2]);
+  }
+  return stack.length === 0 && !/[<>]/.test(body.replace(/<[^<>]*>/g, ''));
+}
+test('plotToSvg: 유효한 XML, polyline 수 = 시리즈 수, 점·눈금·투약 표시', () => {
+  const T = [0, 1, 2, 3];
+  const d = { W: 600, H: 340, L: 56, Tp: 12, pw: 530, ph: 292, xmin: 0, xmax: 3, ymin: 0, ymax: 10, logY: false,
+    xTicks: [0, 1, 2, 3], yTicks: [0, 5, 10], xLabel: 't [h] <&>', events: [0, 1.5, 9],
+    series: [{ T, y: [1, 2, 4, 8], color: '#3a62e0', w: 2.4 }, { T, y: [8, NaN, 2, 1], color: '#e5484d', w: 2, dash: [5, 4] }],
+    marks: [{ color: '#0b7285', pts: [{ t: 0.5, y: 2 }, { t: 2.5, y: 6 }] }], colors: { bg: '#ffffff', text: '#111', muted: '#667', grid: '#ddd', border: '#ccc' } };
+  const svg = K.plotToSvg(d);
+  assert.ok(xmlBalanced(svg), 'XML 균형');
+  assert.ok(svg.startsWith('<svg xmlns="http://www.w3.org/2000/svg"'));
+  assert.equal((svg.match(/<polyline /g) || []).length, 2);
+  assert.equal((svg.match(/<circle /g) || []).length, 2);
+  assert.equal((svg.match(/<path /g) || []).length, 2, '구간 안의 투약 시점만');
+  assert.ok(svg.includes('t [h] &lt;&amp;&gt;'));
+  assert.equal((svg.match(/<text /g) || []).length, 4 + 3 + 1);
+  // 두 번째 시리즈의 NaN 점은 빠진다 (3점)
+  const pl = svg.match(/<polyline points="([^"]*)"/g);
+  assert.equal(pl[1].split('"')[1].split(' ').length, 3);
+  // 로그 축에서 0 이하 값은 빠진다
+  const lg = K.plotToSvg(Object.assign({}, d, { logY: true, ymin: 1, ymax: 10, yTicks: [1, 10], series: [{ T, y: [0, 1, 10, -1], color: '#000' }] }));
+  assert.equal(lg.match(/<polyline points="([^"]*)"/)[1].split(' ').length, 2);
+});
+
+/* ---------- 코드 내보내기 ---------- */
+const exportModel = () => model({
+  vars: [Object.assign(pv('V_h', 1.5), { unit: 'L' }), pv('Q_h', 90), pv('C_b', 10), pv('Kp_h', 5), pv('CL_int', 30), pv('D', 100), fv('kV', 'Q_h/V_h')],
+  eqs: [
+    { state: 'C_h', cap: 'V_h', ic: 0, unit: 'mg/L', terms: [{ sign: 1, on: true, expr: 'Q_h*(C_b - C_h/Kp_h)' }, { sign: -1, on: true, expr: 'CL_int*(C_h/Kp_h)' }, { sign: 1, on: false, expr: '999' }] },
+    { state: 'A', cap: '1', ic: 2, unit: 'mg', terms: [{ sign: -1, on: true, expr: 'kV*A*exp(-0.1*t)' }, { sign: 1, on: true, expr: 'step(t-1)*min(A, 1e-7)' }] },
+  ],
+  doses: [{ on: true, target: 'A', amt: 'D', start: '0', tau: '2', n: '3' }, { on: true, target: 'C_h', amt: 'D/2', start: '1', tau: '1', n: '1' }],
+  sim: { t0: 0, tEnd: 6, tunit: 'h', rtol: 1e-7 },
+});
+test('genPython / genR / genJulia: 상태·상수·식 변수·투약이 코드에 들어간다', () => {
+  const Mx = exportModel(); const Kx = make(Mx);
+  for (const [name, src] of [['py', Kx.genPython()], ['R', Kx.genR()], ['jl', Kx.genJulia()]]) {
+    for (const s of ['C_h', 'A', 'V_h', 'Q_h', 'Kp_h', 'CL_int', 'kV']) assert.ok(new RegExp('\\b' + s + '\\b').test(src), name + ' 에 ' + s);
+    assert.ok(!/\b999\b/.test(src), name + ': 꺼진 항은 제외');
+    assert.ok(src.includes('exp('), name);
+  }
+  const py = Kx.genPython();
+  assert.ok(py.includes('solve_ivp') && py.includes('def rhs(t, y):') && py.includes('1.0 if (t - 1) >= 0'));
+  const R = Kx.genR();
+  assert.ok(R.includes('library(deSolve)') && R.includes('ode(') && R.includes('method = "add"'));
+  assert.match(R, /time = c\(0, 1, 2, 4\)/);
+  assert.match(R, /value = c\(100, 33\.3333\d*, 100, 100\)/);  // D/2 ÷ V_h
+  assert.match(R, /V_h = 1\.5,   # L\n/);
+  assert.ok(R.includes('ifelse((t - 1) >= 0, 1, 0)'));
+  const jl = Kx.genJulia();
+  assert.ok(jl.includes('using DifferentialEquations') && jl.includes('function rhs!(du, u, p, t)') && jl.includes('ODEProblem('));
+  assert.match(jl, /PresetTimeCallback\(\[0\.0, 2\.0, 4\.0\], integ -> \(integ\.u\[2\] \+= 100\.0\)\)/);
+  assert.match(jl, /V_h = 1\.5,/);
+  assert.ok(jl.includes('u0 = [0.0, 2.0]'));
+  // 오류가 있으면 주석으로 알린다
+  const bad = exportModel(); bad.eqs[0].terms[0].expr = '(1+';
+  assert.match(make(bad).genPython(), /^# 식에 오류/); assert.match(make(bad).genR(), /^# 식에 오류/); assert.match(make(bad).genJulia(), /^# 식에 오류/);
+});
+
+test('genSBML: 유효한 XML 이고 species·parameter·rateRule·event 가 있다', () => {
+  const Mx = exportModel(); const Kx = make(Mx);
+  const x = Kx.genSBML();
+  assert.ok(xmlBalanced(x), 'XML 균형');
+  assert.ok(x.startsWith('<?xml version="1.0"'));
+  assert.ok(x.includes('level="3" version="2"'));
+  assert.equal((x.match(/<compartment /g) || []).length, 1);
+  assert.ok(x.includes('<species id="C_h"') && x.includes('<species id="A"') && x.includes('initialAmount="2"'));
+  for (const p of ['V_h', 'Q_h', 'Kp_h', 'CL_int', 'D']) assert.ok(x.includes('<parameter id="' + p + '" value='), p);
+  assert.ok(x.includes('<parameter id="kV" constant="false"/>') && x.includes('<assignmentRule variable="kV">'));
+  assert.equal((x.match(/<rateRule /g) || []).length, 2);
+  assert.equal((x.match(/<event /g) || []).length, 4);
+  assert.ok(x.includes('definitionURL="http://www.sbml.org/sbml/symbols/time"'));
+  assert.ok(x.includes('<piecewise>') && x.includes('<apply><min/>') && x.includes('<cn type="e-notation">1<sep/>-7</cn>'));
+  assert.ok(!x.includes('999'));
+  const bad = exportModel(); bad.eqs[0].terms[0].expr = '(1+';
+  assert.match(make(bad).genSBML(), /^<!-- 식에 오류/);
 });
