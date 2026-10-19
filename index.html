@@ -895,7 +895,11 @@ function loadMathJax(){
   s.src='https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.min.js'; s.async=true;
   s.onload=()=>{
     const pr=window.MathJax&&window.MathJax.startup&&window.MathJax.startup.promise;
-    Promise.resolve(pr).then(()=>{ mathReady=true; rerenderMath(); }).catch(()=>{});
+    Promise.resolve(pr).then(()=>{
+      // tex2svg 만 쓰면 MathJax CSS 가 붙지 않아 화면 낭독용 MathML 이 글자로 한 번 더 보인다
+      if(window.MathJax.svgStylesheet) document.head.appendChild(window.MathJax.svgStylesheet());
+      mathReady=true; rerenderMath();
+    }).catch(()=>{});
   };
   s.onerror=()=>toast('수식 렌더러를 불러오지 못해 LaTeX 원문으로 표시합니다');
   document.head.appendChild(s);

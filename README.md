@@ -19,6 +19,7 @@
 ## 구성
 - `index.html` 한 파일로 동작합니다 (HTML·CSS·JS 포함).
 - 수식 렌더링은 MathJax 3 (cdnjs)를 불러옵니다. 오프라인에서는 LaTeX 원문으로 표시됩니다.
+- 인터넷 없이 쓸 단일 파일: `node tools/build-standalone.js <tex-svg.js 경로>` 가 MathJax(tex-svg)를 넣은 `dist/latexbuilder.html`(약 2.2 MB)을 만듭니다. MathJax 는 `npm pack mathjax@3.2.2 && tar xzf mathjax-3.2.2.tgz package/es5/tex-svg.js` 로 받을 수 있고, `node_modules/mathjax` 가 있으면 경로를 생략해도 됩니다.
 - 계산 코어(수식 파서, LaTeX 출력, 공유 링크 인코딩, 컴파일, Dormand–Prince·Rodas3 적분기와 자동 전환, Nelder–Mead·파라미터 추정, 단위 검사, 보간, 눈금, 그래프 SVG, 코드·SBML 내보내기)는 `/* @core-start */ … /* @core-end */` 주석으로 표시돼 있고 DOM을 건드리지 않습니다.
 - 스윕과 파라미터 추정은 같은 `@core` 블록을 페이지의 `<script>` 텍스트에서 꺼내 Blob URL 로 만든 Web Worker 에서 돌립니다. Worker 를 만들 수 없는 환경(`file://`)에서는 메인 스레드에서 계산합니다.
 - 저장 형식: `localStorage` 키 `ode-equation-builder-v1`(현재 모델), `ode-builder-presets-v1`(내 프리셋). 예전에 내보낸 JSON 도 `normalize()` 가 기본값을 채워 그대로 불러옵니다.
