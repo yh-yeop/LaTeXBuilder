@@ -11,3 +11,10 @@ jobs:
         with:
           node-version: 22
       - run: npm test
+      # 챕터 2 (scipy 대조 tests/chapter2_scipy.mjs는 파이썬이 필요하고 오래 걸려 제외)
+      - name: 챕터 2 엔진 추출본이 index.html과 같은지
+        run: node tools/build-engine.mjs --check
+      - name: 챕터 1 회귀 (tests/baseline.json)
+        run: node tests/baseline.mjs
+      - name: 챕터 2 검증 (해석해·F·질량 보존·보정)
+        run: node tests/chapter2.mjs
