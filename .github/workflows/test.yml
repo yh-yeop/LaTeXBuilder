@@ -18,3 +18,5 @@ jobs:
         run: node tests/baseline.mjs
       - name: 챕터 2 검증 (단계별 검사 · 해석해 · F · 질량 보존 · 보정)
         run: node tests/chapter2.mjs
+      - name: 챕터 3 검증 (해석해 · R_0 · 치료 임계 · 질량 보존)
+        run: node tests/chapter3.mjs
