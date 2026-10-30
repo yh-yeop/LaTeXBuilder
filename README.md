@@ -34,6 +34,7 @@ npm test        # Node 22+, 의존성 없음
 챕터 1(모델 0 ~ 6단계)과 별개의 탐구 모델입니다. 몸 식은 챕터 1의 3단계 모델 1을 그대로 쓰고, 장관만 내강 → 장 세포 → 혈액(입구 k_in, 출구 k_out, 혈액 유입 k_b, 대변 통과 k_tr) 3구획으로 바꿨습니다. F는 입력이 아니라 결과값입니다.
 - `chapter2/engine.gen.js`는 `index.html`의 계산 코드를 자동 추출한 파일입니다. 직접 고치지 말고 `index.html`을 고친 뒤 `node tools/build-engine.mjs`로 다시 만드세요.
 - 페이지가 스크립트 파일을 불러오므로 로컬에서는 정적 서버로 여세요 (예: `python -m http.server`).
+- 적분기는 명시적(Dormand–Prince)으로 고정했습니다. 챕터 1 기본값(자동)은 이 모델에서 Rodas3로 바뀌어 약 2.7배 느리고, 결과 차이는 1e-5 수준입니다.
 
 ## 검증
 - `node tests/baseline.mjs` — 챕터 1 모든 단계의 지표가 `tests/baseline.json` 기록과 같은지 (회귀)
