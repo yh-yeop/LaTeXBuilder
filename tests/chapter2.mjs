@@ -172,6 +172,32 @@ const OFF = { en_on: 0, ab_on: 0, fip_on: 0 };
   if (process.argv.includes('--show')) for (const [k, ls] of Object.entries(lines)) { console.log('  [' + k + ']'); ls.forEach(x => console.log('   - ' + x)); }
 }
 
+// 해설 란과 순차 튜토리얼이 모델과 어긋나지 않는지 (바뀐 변수 이름, 보일 상태, 화면 위치)
+{
+  const FOCUS = ['#plot', '#metrics', '#varCard', '#infoCard', '#eqView', '#eqEditor', '#doseCard', '#cmpCard', '#expCard', '#simCard', '#tourCard', '#essayCard'];
+  const bad = [];
+  for (const key of Object.keys(C2.presets)) {
+    const I = C2.info[key], m = C2.presets[key]();
+    const params = new Set(m.vars.filter(v => v.kind === 'param').map(v => v.name));
+    const states = new Set(m.eqs.map(q => q.state));
+    const E = I.essay;
+    if (!E || !E.summary || !(E.sections || []).length) { bad.push(key + ': 해설 없음'); continue; }
+    E.sections.forEach((sec, i) => { if (!sec.h || !(sec.p || []).length) bad.push(`${key}: 해설 ${i + 1}번째 절이 비었음`); });
+    const T = I.tour;
+    if (!T || T.length < 4) { bad.push(key + ': 튜토리얼이 없거나 너무 짧음'); continue; }
+    T.forEach((st, i) => {
+      const at = `${key} 튜토리얼 ${i + 1}단계`;
+      if (!st.title || !st.text || !st.text.length) bad.push(at + ': 제목이나 본문 없음');
+      Object.keys(st.set || {}).forEach(k => { if (!params.has(k)) bad.push(`${at}: 상수 ${k} 없음`); });
+      (st.show || []).forEach(s => { if (!states.has(s)) bad.push(`${at}: 상태 ${s} 없음`); });
+      if (st.focus && FOCUS.indexOf(st.focus) < 0) bad.push(`${at}: 화면 위치 ${st.focus} 없음`);
+    });
+  }
+  const steps = Object.keys(C2.presets).reduce((n, k) => n + ((C2.info[k].tour || []).length), 0);
+  const secs = Object.keys(C2.presets).reduce((n, k) => n + ((C2.info[k].essay && C2.info[k].essay.sections || []).length), 0);
+  check('해설 란 · 순차 튜토리얼', bad.length === 0, bad.length ? bad.slice(0, 6).join(' / ') : `${Object.keys(C2.presets).length}개 단계 · 해설 ${secs}절 · 튜토리얼 ${steps}단계, 변수·상태·화면 위치 모두 실재`);
+}
+
 const bad = results.filter(r => !r.ok).length;
 console.log(bad ? `\n챕터 2 검증 실패: ${bad}/${results.length}` : `\n챕터 2 검증 통과: ${results.length}개 항목`);
 process.exit(bad ? 1 : 0);

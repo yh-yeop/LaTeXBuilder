@@ -503,7 +503,7 @@ const HELP_HTML=`
 </ul>`;
 let M=defaultModel(), hadStored=false;
 try{ const raw=localStorage.getItem(LS_KEY); if(raw){ M=normalize(JSON.parse(raw)); hadStored=true; } }catch(e){}
-const S={collapsed:new Set(),helpOpen:new Set(),varQ:'',varF:'',varView:'card',result:null,hidden:new Set(),hover:null,layout:null,f:null,P:null,compile:null,warnings:[],cmp:[],exps:[],eventTimes:[],sweepJob:0,sweepPending:false};
+const S={collapsed:new Set(),helpOpen:new Set(),varQ:'',varF:'',varView:'card',tour:null,essayClosed:false,result:null,hidden:new Set(),hover:null,layout:null,f:null,P:null,compile:null,warnings:[],cmp:[],exps:[],eventTimes:[],sweepJob:0,sweepPending:false};
 let saveTimer=0;
 function save(){ clearTimeout(saveTimer); saveTimer=setTimeout(()=>{ try{ localStorage.setItem(LS_KEY,JSON.stringify(M)); }catch(e){} },300); }
 
@@ -1239,7 +1239,7 @@ function run(){
   S.cmp=computeCmp(C,P0,S.result.main,warns);
   S.exps=computeExps(C,P0,S.result.main,warns);
   const ds=$('#doseSummary'); if(ds) ds.textContent=E0.ev.length?('이번 실행: 총 '+E0.ev.length+'회 투약'):'';
-  renderBanner(errs,warns,infos); renderLegend(); renderMetrics(); renderInfo(); drawPlot(); save();
+  renderBanner(errs,warns,infos); renderLegend(); renderMetrics(); renderInfo(); renderEssay(); drawPlot(); save();
 }
 function renderBanner(errs,warns,infos){
   const el=$('#banner'); el.replaceChildren();
@@ -1585,10 +1585,10 @@ function loadPreset(v){
   const PRESETS=PACK_PRESETS||{m0:defaultModel,s1:presetStage1,s2:presetStage2,m1:presetModel1,iv:presetIV2c,ck:presetCook,c1:presetCase1};
   if(!PRESETS[v]) return;
   M=PRESETS[v](); if(v!=='m0') applyMeta(M,v);
-  S.hidden.clear(); S.collapsed.clear(); S.varQ=''; S.varF='';
-  const vis=(M.info&&M.info.show)||['C_b'];   // 처음에 보이는 곡선 (챕터 1은 C_b)
+  S.hidden.clear(); S.collapsed.clear(); S.varQ=''; S.varF=''; S.tour=null; S.essayClosed=false;
+  const vis=((curInfo()||{}).show)||['C_b'];   // 처음에 보이는 곡선 (챕터 1은 C_b)
   if(v!=='m0') M.eqs.forEach(q=>{ if(!vis.includes(q.state)) S.hidden.add(q.state); });
-  ((M.info&&M.info.hideCmp)||[]).forEach(ci=>S.hidden.add('cmp:'+ci));   // 기준 곡선이 그래프를 가릴 때 (예: 누적 투여량)
+  ((curInfo()||{}).hideCmp||[]).forEach(ci=>S.hidden.add('cmp:'+ci));   // 기준 곡선이 그래프를 가릴 때 (예: 누적 투여량)
   if(M.eqs.length>4) M.eqs.forEach(q=>{ if(!vis.includes(q.state)) S.collapsed.add(q.state); });
   $('#optCdot').checked=!!M.opts.cdot; $('#optBreak').checked=!!M.opts.breakTerms; $('#optLog').checked=!!M.opts.logY;
   renderAll();
@@ -1608,7 +1608,7 @@ function renderInfo(){
   el.append(h('div',{class:'card-h'},h('h2',{},'진행 단계'),h('span',{class:'muted',style:'font-size:12px'},'누르면 그 단계 모델로 바뀝니다')));
   el.append(h('div',{class:'stepper'},STAGES.map(([k,lab])=>h('button',{class:'step'+(k===cur?' on':''),'aria-current':k===cur?'step':null,onclick:()=>loadPreset(k)},lab))));
   if(!M.info){ el.append(h('p',{class:'hint',style:'margin:10px 0 0'},'지금은 직접 만든 모델입니다. 단계를 불러오면 목적과 확인할 곳이 여기에 표시됩니다.')); return; }
-  const I=Object.assign({},M.info,INFO[M.info.key]||{});   // 설명 글은 저장된 모델보다 현재 단계 정의를 따른다
+  const I=curInfo();   // 설명 글은 저장된 모델보다 현재 단계 정의를 따른다
   el.append(h('h3',{class:'stage-title'},I.title));
   const dl=h('dl',{class:'stage-dl'});
   [['의도',I.why],['목적',I.goal],['볼 곳',I.look],['기준',I.pass],['주의',I.warn]].forEach(([k,v])=>{ if(v) dl.append(h('dt',{},k),h('dd',{},v)); });
@@ -1629,8 +1629,97 @@ function renderInfo(){
   if(lines.length||(I.guide&&I.guide.length)) el.append(h('div',{class:'guide'},
     lines.length?[h('div',{class:'guide-h'},'지금 결과 읽기'),h('ul',{},lines.map(x=>h('li',{},x)))]:null,
     I.guide&&I.guide.length?h('details',{open:true},h('summary',{},'해석 가이드'),h('ul',{},I.guide.map(x=>h('li',{},x)))):null));
+  const act=h('div',{class:'row',style:'margin-top:12px'});
+  if(I.tour&&I.tour.length&&!S.tour) act.append(h('button',{class:'btn sm primary',onclick:startTour},'튜토리얼 시작 ('+I.tour.length+'단계)'));
+  if(I.essay) act.append(h('button',{class:'btn sm',onclick:()=>{ S.essayClosed=false; renderEssay(); const e=$('#essayCard'); if(e) e.scrollIntoView({block:'start',behavior:'smooth'}); }},'해설 보기'));
+  if(act.childNodes.length) el.append(act);
   if(I.link) el.append(h('div',{class:'row',style:'margin-top:12px'},h('a',{class:'btn sm',href:I.link.href,style:'text-decoration:none'},I.link.label)));
   if(I.next){ const nx=STAGES.find(z=>z[0]===I.next); el.append(h('div',{class:'row',style:'margin-top:12px'},h('button',{class:'btn sm primary',onclick:()=>loadPreset(I.next)},'다음 단계 불러오기 ('+nx[1]+')'))); }
+}
+const curInfo=()=>M.info?Object.assign({},M.info,INFO[M.info.key]||{}):null;
+
+/* ---- 해설 란 ---- */
+function renderEssay(){
+  const el=$('#essayCard'); if(!el) return;
+  const I=curInfo(), E=I&&I.essay;
+  if(!E){ el.hidden=true; el.replaceChildren(); return; }
+  el.hidden=false; el.replaceChildren();
+  const open=!S.essayClosed;
+  const body=h('div',{class:'essay',hidden:!open});
+  const btn=h('button',{class:'btn sm'},open?'접기':'펼치기');
+  btn.addEventListener('click',()=>{ const now=body.hidden; body.hidden=!now; S.essayClosed=!now; btn.textContent=now?'접기':'펼치기'; });
+  el.append(h('div',{class:'card-h'},h('h2',{},'해설'),h('div',{class:'row'},h('span',{class:'muted',style:'font-size:12px'},'이 단계가 무엇을 하는지 자세히'),btn)));
+  if(E.summary) body.append(h('p',{class:'essay-sum'},E.summary));
+  (E.sections||[]).forEach(sec=>{
+    body.append(h('h3',{},sec.h));
+    (sec.p||[]).forEach(t=>body.append(h('p',{},t)));
+    if(sec.list&&sec.list.length) body.append(h('ul',{},sec.list.map(x=>h('li',{},x))));
+  });
+  if(E.terms&&E.terms.length){
+    body.append(h('h3',{},'용어'));
+    body.append(h('div',{class:'scroll-x'},h('table',{class:'m'},h('tbody',{},E.terms.map(t=>h('tr',{},h('td',{},t[0]),h('td',{},t[1])))))));
+  }
+  el.append(body);
+}
+
+/* ---- 순차 튜토리얼 ---- */
+function startTour(){
+  const I=curInfo();
+  if(!(I&&I.tour&&I.tour.length)) return;
+  S.tour={i:0,snap:JSON.stringify(M)};
+  applyTourStep();
+}
+function endTour(restore){
+  if(!S.tour) return;
+  const snap=S.tour.snap; S.tour=null;
+  if(restore&&snap){ try{ M=normalize(JSON.parse(snap)); renderAll(); toast('튜토리얼에서 바꾼 값을 되돌렸습니다'); return; }catch(e){} }
+  renderTour();
+}
+function gotoTourStep(i){
+  const I=curInfo(), T=I&&I.tour; if(!S.tour||!T||i<0||i>=T.length) return;
+  S.tour.i=i; applyTourStep();
+}
+function applyTourStep(){
+  const I=curInfo(), st=I.tour[S.tour.i];
+  if(st.set){
+    for(const k in st.set){
+      const v=findVar(k); if(!v||v.kind!=='param') continue;
+      const x=num(st.set[k]); v.value=x; v.expr=String(x);
+      if(x>v.max) v.max=x*2;
+      if(x<v.min) v.min=x<0?x*2:0;
+    }
+    renderVars();
+  }
+  if(st.show){
+    S.hidden.clear();
+    M.eqs.forEach(q=>{ if(st.show.indexOf(q.state)<0) S.hidden.add(q.state); });
+    (I.hideCmp||[]).forEach(ci=>S.hidden.add('cmp:'+ci));
+  }
+  renderTour(); run();
+  const target=st.focus?$(st.focus):$('#tourCard');
+  if(target){ try{ target.scrollIntoView({block:'center',behavior:'smooth'}); }catch(e){ target.scrollIntoView(); } }
+}
+function renderTour(){
+  const el=$('#tourCard'); if(!el) return;
+  const I=curInfo(), T=I&&I.tour;
+  if(!T||!S.tour){ el.hidden=true; el.replaceChildren(); return; }
+  el.hidden=false; el.replaceChildren();
+  const i=S.tour.i, n=T.length, st=T[i];
+  el.append(h('div',{class:'card-h'},h('h2',{},'튜토리얼 · '+(i+1)+' / '+n),
+    h('div',{class:'row'},h('span',{class:'dots'},T.map((_,k)=>h('span',{class:'dot'+(k===i?' on':k<i?' done':'')}))),
+      h('button',{class:'btn sm',onclick:()=>endTour(true)},'끝내기'))));
+  el.append(h('h3',{class:'tour-t'},st.title));
+  (Array.isArray(st.text)?st.text:[st.text]).forEach(t=>el.append(h('p',{class:'tour-p'},t)));
+  if(st.set) el.append(h('div',{class:'tour-set'},'이 단계에서 바꾼 값 · '+Object.keys(st.set).map(k=>k+' = '+st.set[k]).join(' · ')));
+  const nav=h('div',{class:'row',style:'margin-top:10px'});
+  nav.append(h('button',{class:'btn sm',disabled:i===0,onclick:()=>gotoTourStep(i-1)},'← 이전'));
+  if(i<n-1) nav.append(h('button',{class:'btn sm primary',onclick:()=>gotoTourStep(i+1)},'다음 →'));
+  else{
+    nav.append(h('button',{class:'btn sm primary',onclick:()=>endTour(true)},'튜토리얼 끝내기'));
+    if(I.next) nav.append(h('button',{class:'btn sm',onclick:()=>{ const nx=I.next; endTour(false); loadPreset(nx); startTour(); }},'다음 단계 튜토리얼 →'));
+  }
+  el.append(nav);
+  el.append(h('p',{class:'hint',style:'margin:8px 0 0'},'끝내기를 누르면 튜토리얼에서 바꾼 값이 처음으로 돌아갑니다.'));
 }
 const TAGCLS={'문헌':'lit','보정':'cal','계산':'calc','가정':'asm','예시':'ex'};
 const tagEl=t=>t?h('span',{class:'tag tag-'+(TAGCLS[t]||'calc')},t):null;
@@ -2621,7 +2710,7 @@ if(PACK){
 }
 
 /* ================= 초기화 & 이벤트 ================= */
-function renderAll(){ renderEqs(); renderDoses(); renderVars(); renderCmp(); renderExps(); renderSim(); renderEqView(); renderInfo(); run(); }
+function renderAll(){ renderEqs(); renderDoses(); renderVars(); renderCmp(); renderExps(); renderSim(); renderEqView(); renderInfo(); renderEssay(); renderTour(); run(); }
 
 function bind(){
   if(PACK){
