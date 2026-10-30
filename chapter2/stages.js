@@ -21,12 +21,13 @@ function Ch2(api){
   const BODY_SUM=()=>'V_b*C_b + '+api.ORG.map(o=>'V_'+o[0]+'*C_'+o[0]).join(' + ')+' + V_asc*C_asc + A_el';
   function gutModel(k0){
     const m=api.presets.m1();      // 챕터 1 3단계와 같은 몸 (값·식 동일)
-    m.vars=m.vars.filter(v=>v.name!=='F'&&v.name!=='ka');
+    // 장 변수를 앞에 둔다 (변수 표에서 이 챕터의 변수가 먼저 보이도록). F·ka·IV 용량은 쓰지 않아 뺀다
+    const body=m.vars.filter(v=>!['F','ka','Dose_IV'].includes(v.name));
     const K=(name,latex,x)=>PV(name,latex,x,0,(x>0?x:1)*8,'1/h');   // 0도 그대로 둔다 (극한 조건 검증용)
-    m.vars.push(
+    m.vars=[
       K('k_in0','k_{in,0}',k0.k_in),K('k_out0','k_{out,0}',k0.k_out),K('k_b0','k_{b,0}',k0.k_b),K('k_tr0','k_{tr,0}',k0.k_tr),
       lg(PV('m_in','m_{in}',1,0.25,4,'배')),lg(PV('m_out','m_{out}',1,0.25,4,'배')),lg(PV('m_tr','m_{tr}',1,0.25,4,'배')),
-      FV('k_in','k_{in}','k_in0*m_in','1/h'),FV('k_out','k_{out}','k_out0*m_out','1/h'),FV('k_b','k_b','k_b0','1/h'),FV('k_tr','k_{tr}','k_tr0*m_tr','1/h'));
+      FV('k_in','k_{in}','k_in0*m_in','1/h'),FV('k_out','k_{out}','k_out0*m_out','1/h'),FV('k_b','k_b','k_b0','1/h'),FV('k_tr','k_{tr}','k_tr0*m_tr','1/h'),...body];
     const gi=m.eqs.findIndex(q=>q.state==='A_gut');
     m.eqs.splice(gi,1,
       {state:'A_L',latex:'A_L',cap:'1',ic:0,unit:'mg',terms:[T_(-1,'k_in*A_L'),T_(1,'k_out*A_E'),T_(-1,'k_tr*A_L')]},
@@ -107,7 +108,7 @@ function Ch2(api){
   }
   function g4(){
     const m=gutModel(K0);
-    m.vars.push(...lvVars(),...pertVars(),...pgpVars(),PV('m_dia','m_{dia}',2,1,5,'배'),
+    m.vars.unshift(...lvVars(),...pertVars(),...pgpVars(),PV('m_dia','m_{dia}',2,1,5,'배'),
       FV('F_t','F(t)','k_in*k_b/(k_in*k_b + k_tr*(k_b + k_out))','-'));
     // P-gp 발현을 출구 속도에, 장염 중 설사를 통과 속도에 연결 (ENT/CNT 연결 근거는 없어 k_in은 그대로)
     m.vars.find(v=>v.name==='k_out').expr='k_out0*m_out*P_gp';
@@ -172,6 +173,114 @@ function Ch2(api){
       pass:'질량 보존 ✓. 배수가 모두 1이면 2-4에서 교란을 끈 결과와 같습니다.',
       warn:NO_CAT,next:null,show:['C_b'],link:{href:'analysis.html',label:'분석 화면 열기 (시나리오 · 프리셋 비교 · 히트맵)'}}
   };
+  // 식 변수 설명 (변수 표·발표용)
+  Object.assign(ann,{
+    xcs:tag('계산','공생균 평형점 (1 − a_co)/(1 − a_co·a_oc). 두 계수가 1보다 작을 때 의미가 있음'),
+    xos:tag('계산','기회균 평형점 (1 − a_oc)/(1 − a_co·a_oc)'),
+    W_en:tag('계산','장염 기간 창: 기간 중 1, 밖에서 0'),W_ab:tag('계산','항생제 기간 창: 기간 중 1, 밖에서 0'),
+    H_fip:tag('계산','FIP 교란: 시작 시점 이후 계속 1'),
+    L_c:tag('계산','공생균 추가 손실 속도의 합 (장염 + 항생제 + FIP)'),L_o:tag('계산','기회균 추가 손실 속도 (항생제)'),
+    Stim:tag('계산','P-gp 발현 자극. 대사산물 S_m = 1(평형)에서 1, 0이면 1 − E_P'),
+    k_in:tag('계산','입구 속도 = k_in,0 × m_in'),k_b:tag('계산','장 세포 → 혈액 속도 = k_b,0'),
+    k_out:tag('계산','출구 속도 = k_out,0 × m_out (2-4에서는 × P_gp)'),k_tr:tag('계산','통과 속도 = k_tr,0 × m_tr (2-4에서는 장염 중 × m_dia)')
+  });
+
+  /* ---- 단계별 의도 · 해석 가이드 · 지금 결과 읽기 (발표용) ---- */
+  function fmtN(x,p){ if(!Number.isFinite(x)) return String(x); return String(parseFloat(x.toPrecision(p))); }
+  const f3=x=>fmtN(x,3), pct=x=>fmtN(x*100,3)+'%', day=hh=>fmtN(hh/24,3)+'일';
+  const firstT=(T,V,pred,from)=>{ for(let k=0;k<T.length;k++) if(T[k]>=(from||0)&&pred(V[k])) return T[k]; return null; };
+  const argExt=(T,V,sgn)=>{ let b=0; for(let k=1;k<V.length;k++) if(sgn*(V[k]-V[b])>0) b=k; return {v:V[b],t:T[b]}; };
+  const below=(T,V,thr)=>{ let s=0; for(let k=1;k<T.length;k++){ if(V[k-1]<thr&&V[k]<thr) s+=T[k]-T[k-1]; } return s; };
+  const eqOf=P=>{ const d=1-P.a_co*P.a_oc; return {c:(1-P.a_co)/d,o:(1-P.a_oc)/d}; };
+
+  Object.assign(info.g1,{
+    why:'장내 미생물 군집이 스스로 안정된 상태(평형)를 갖는다는 기준선을 세웁니다. 다음 단계들의 “정상 장 상태”가 바로 이 평형입니다.',
+    guide:['x_c·x_o가 평평해지는 값이 평형점입니다. 변수 표의 x_c*, x_o*와 같으면 모델이 의도대로 작동하는 것입니다.',
+      '경쟁자가 없는 y_c는 1까지 자랍니다. x_c 평형이 1보다 낮은 만큼이 기회균의 경쟁 효과입니다.',
+      'a_co 또는 a_oc를 1 넘게 올리면 한 군이 밀려납니다(경쟁 배제). 발표에서 “균형이 깨지는 조건”을 보여 줄 때 씁니다.',
+      '속도 r_c·r_o는 평형 위치를 바꾸지 않고 도달 시간만 바꿉니다.'],
+    interpret(c){
+      const P=c.P, xc=c.col('x_c'), xo=c.col('x_o'), eq=eqOf(P), out=[];
+      const coex=P.a_co<1&&P.a_oc<1;
+      out.push('경쟁 계수 a_co '+f3(P.a_co)+', a_oc '+f3(P.a_oc)+' → '+(coex?'두 군이 함께 살아남는 조건입니다.':'한 군이 밀려나는 조건(경쟁 배제)입니다. 평형점 닫힌 식은 이때 맞지 않습니다.'));
+      out.push('끝값: 공생균 x_c '+f3(xc.at(-1))+(coex?' (평형 '+f3(eq.c)+')':'')+', 기회균 x_o '+f3(xo.at(-1))+(coex?' (평형 '+f3(eq.o)+')':'')+'.');
+      if(coex){
+        out.push('경쟁 때문에 공생균 평형이 단독일 때(1)보다 '+pct(1-eq.c)+' 낮습니다.');
+        const t95=firstT(c.T,xc,v=>v>=0.95*eq.c);
+        out.push(t95==null?'시뮬레이션 기간 안에 공생균이 평형의 95%에 닿지 않았습니다.':'공생균이 평형의 95%에 닿는 시간: 약 '+day(t95)+'.');
+      }
+      return out;
+    }});
+  Object.assign(info.g2,{
+    why:'장 상태를 나쁘게 만드는 사건(장염·항생제·FIP)이 미생물 균형을 얼마나, 얼마 동안 흔드는지 봅니다. 회복 곡선을 따로 가정하지 않고 미생물 동역학에서 얻는 것이 핵심입니다.',
+    guide:['공생균 x_c가 내려간 깊이(최저 %)와 다시 평형 근처로 돌아오는 시간이 이 단계의 결과입니다.',
+      '공생균이 줄면 경쟁이 약해져 기회균 x_o가 늘어납니다(번성). 두 곡선이 반대로 움직이는지 보세요.',
+      '교란이 끝난 뒤에도 회복에 며칠이 걸리는 것은 r_c와 경쟁 구조 때문입니다. FIP처럼 계속되는 교란은 원래 평형으로 돌아오지 않고 새 평형으로 옮겨 갑니다.',
+      '교란 세기(mu_en, k_abc)와 기간(T_en, T_ab)은 가정입니다. 발표에서는 “이 정도 교란이면 이만큼 흔들린다”는 조건부 결과로 말하세요.'],
+    interpret(c){
+      const P=c.P, xc=c.col('x_c'), xo=c.col('x_o'), eq=eqOf(P), out=[];
+      const on=[]; let tEnd=0;
+      if(P.en_on>0){ on.push('장염('+day(P.t_en)+'부터 '+day(P.T_en)+')'); tEnd=Math.max(tEnd,P.t_en+P.T_en); }
+      if(P.ab_on>0){ on.push('항생제('+day(P.t_ab)+'부터 '+day(P.T_ab)+')'); tEnd=Math.max(tEnd,P.t_ab+P.T_ab); }
+      if(P.fip_on>0) on.push('FIP('+day(P.t_fip)+'부터 계속)');
+      if(!on.length) return ['켜진 교란이 없습니다. 곡선이 평형에 그대로 머물면 정상입니다.'];
+      out.push('켜진 교란: '+on.join(', ')+'.');
+      const mn=argExt(c.T,xc,-1), mx=argExt(c.T,xo,1);
+      out.push('공생균 최저 '+pct(mn.v/eq.c)+' (평형 대비, '+day(mn.t)+'), 기회균 최대 '+f3(mx.v/eq.o)+'배 ('+day(mx.t)+').');
+      if(P.fip_on>0) out.push('FIP 교란이 계속되므로 끝값 '+pct(xc.at(-1)/eq.c)+'은 원래 평형이 아니라 새 평형 쪽입니다.');
+      else if(tEnd>0){
+        const t90=firstT(c.T,xc,v=>v>=0.9*eq.c,tEnd);
+        out.push(t90==null?'교란이 끝난 뒤 시뮬레이션 끝까지 평형의 90%로 돌아오지 못했습니다.':'교란이 끝나고 평형의 90%로 돌아오는 데 약 '+day(t90-tEnd)+' 걸렸습니다. 끝값은 평형의 '+pct(xc.at(-1)/eq.c)+'.');
+      }
+      return out;
+    }});
+  Object.assign(info.g3,{
+    why:'미생물 변화가 약물 수송체(P-gp)로 전달되는 경로를 만듭니다. 미생물이 회복된 뒤에도 수송체 변화가 남는 “시간차”가 여기서 생깁니다.',
+    guide:['순서를 보세요: 공생균 x_c → 대사산물 S_m(빠르게 따라감) → P-gp 발현 P_gp(느리게 따라감).',
+      'P_gp가 가장 낮은 시점이 공생균 최저보다 늦습니다. 이 지연이 다음 단계에서 “장염이 끝난 뒤의 효과”를 만듭니다.',
+      'E_P는 P-gp가 대사산물에 얼마나 의존하는지, k_P는 얼마나 빨리 회복하는지입니다. 둘 다 가정이라 슬라이더로 결론이 바뀌는 범위를 확인해 두면 발표 질문에 답하기 좋습니다.',
+      '방향(대사산물 감소 → P-gp 감소)은 문헌 확인(마우스·사람, 대장)이고, 크기와 속도는 가정입니다.'],
+    interpret(c){
+      const xc=c.col('x_c'), Sm=c.col('S_m'), Pg=c.col('P_gp'), out=[];
+      const a=argExt(c.T,xc,-1), b=argExt(c.T,Sm,-1), p=argExt(c.T,Pg,-1);
+      if(p.v>0.999) return ['P-gp가 거의 변하지 않았습니다 (최저 '+f3(p.v)+'). 교란이 꺼져 있거나 E_P가 작습니다.'];
+      out.push('최저점 순서: 공생균 '+day(a.t)+' → 대사산물 '+day(b.t)+' → P-gp '+day(p.t)+' (P-gp는 공생균보다 '+fmtN(p.t-a.t,3)+' h 늦음).');
+      out.push('P-gp 최저 '+pct(p.v)+' (기준 대비), 기준의 90% 아래였던 시간 '+day(below(c.T,Pg,0.9))+'.');
+      out.push('끝값 P_gp '+f3(Pg.at(-1))+': '+(Pg.at(-1)>0.99?'시뮬레이션 끝에는 거의 회복했습니다.':'시뮬레이션 끝에도 아직 회복 중입니다.'));
+      return out;
+    }});
+  Object.assign(info.g4,{
+    why:'수송체 변화와 설사가 실제 혈중 농도와 F를 어떻게 바꾸는지 PBPK로 확인합니다. 두 효과가 반대 방향이라, 어느 쪽이 언제 우세한지가 결론을 정합니다.',
+    guide:['P-gp 감소 → 출구(k_out) 감소 → F 증가. 설사 → 통과(k_tr) 증가 → F 감소. 두 효과가 반대입니다.',
+      '노출 지표에서 “장염 중 / 교란 전” AUCτ 비율이 1보다 작으면 설사 효과가, 크면 P-gp 효과가 우세한 것입니다.',
+      'F(t)가 장염이 끝난 뒤 기준보다 올라가면, 설사는 멈췄지만 P-gp가 아직 낮아 흡수가 늘어난 구간입니다 (2-3의 시간차).',
+      '절대 농도보다 방향과 순서를 결론으로 쓰세요. m_dia, E_P, k_P를 바꿔 결론이 뒤집히는 지점을 찾으면 민감도 근거가 됩니다.',
+      '기준 흡수가 관측보다 매우 빠르게 보정되어 있어(Tmax 약 0.13 h), Cmax 비교는 F·AUC 비교보다 덜 믿을 만합니다.'],
+    interpret(c){
+      const out=[], ex=c.exps, F=c.series('F_t'), F0=F[0];
+      const pre=ex[0], dur=ex[1], last=ex[2];
+      if(pre&&dur&&pre.auc>0){
+        const r=dur.auc/pre.auc;
+        out.push('장염 중 AUCτ는 교란 전의 '+f3(r)+'배 → '+(r<0.99?'이 구간에서는 설사(통과↑)로 인한 F 감소가 P-gp 감소 효과보다 큽니다.':r>1.01?'이 구간에서는 P-gp 감소로 인한 F 증가가 설사 효과보다 큽니다.':'두 효과가 거의 상쇄됩니다.'));
+      }
+      const lo=argExt(c.T,F,-1), hi=argExt(c.T,F,1);
+      out.push('F(t) 범위: 최저 '+f3(lo.v)+' ('+day(lo.t)+') ~ 최고 '+f3(hi.v)+' ('+day(hi.t)+'), 기준 '+f3(F0)+'.');
+      if(hi.v>F0*1.001&&c.P.en_on>0&&hi.t>=c.P.t_en+c.P.T_en) out.push('장염이 끝난 뒤 F(t)가 기준보다 '+pct(hi.v/F0-1)+' 높아지는 구간이 있습니다 → 설사는 멈췄지만 P-gp가 아직 회복 중이라 흡수가 늘어남.');
+      if(pre&&last&&pre.auc>0) out.push('마지막 투약 간격 AUCτ는 교란 전의 '+f3(last.auc/pre.auc)+'배 → '+(Math.abs(last.auc/pre.auc-1)<0.01?'28일 시점에는 거의 원래대로 돌아왔습니다.':'28일 시점에도 차이가 남아 있습니다.'));
+      return out;
+    }});
+  Object.assign(info.g5,{
+    why:'미생물 모델의 가정과 떼어서, 어떤 수송체 변화가 F를 올리고 내리는지 일반적인 민감도로 확인합니다. 분석 화면에서는 분배 프리셋을 바꿔도 방향이 유지되는지 봅니다.',
+    guide:['m_in(입구)↑ → F↑, m_out(출구, P-gp)↑ → F↓, m_tr(통과, 설사)↑ → F↓. 방향은 닫힌 식에서 항상 성립합니다.',
+      '선형 모델이라 AUC0–∞ 비율은 F 비율과 정확히 같습니다. 그래서 F 비율 하나로 노출 변화를 말할 수 있습니다.',
+      '크기는 기준 분배(입구 우세 / 균형 / 출구 우세)에 따라 달라집니다. 분석 화면의 “프리셋 3개에서 결론이 유지되는지” 표를 발표 근거로 쓰세요.',
+      '히트맵의 점선(F 비율 = 1)은 입구·출구 변화가 서로 상쇄되는 조합입니다.'],
+    interpret(c){
+      const P=c.P, Fof=(mi,mo,mt)=>{ const a=P.k_in0*mi,o=P.k_out0*mo,b=P.k_b0,t=P.k_tr0*mt; return a*b/(a*b+t*(b+o)); };
+      const F0=Fof(1,1,1), F=Fof(P.m_in,P.m_out,P.m_tr), r=F/F0;
+      return ['지금 배수: 입구 ×'+f3(P.m_in)+', 출구 ×'+f3(P.m_out)+', 통과 ×'+f3(P.m_tr)+'.',
+        'F = '+f3(F)+' (기준 '+f3(F0)+')로 기준의 '+f3(r)+'배 → '+(Math.abs(r-1)<1e-3?'기준과 같습니다.':r>1?'흡수가 늘어나는 방향입니다.':'흡수가 줄어드는 방향입니다.')+' AUC0–∞도 같은 비율로 바뀝니다.'];
+    }});
   return {
     K0,BODY_SUM,gutModel,
     presets:{g1,g2,g3,g4,g5},
@@ -190,14 +299,15 @@ G.STAGE_PACK={
   keys:{model:'ch2-equation-builder-v1',presets:'ch2-builder-presets-v1',welcome:'ch2-builder-welcome-v1'},
   link:{href:'../index.html',label:'← 챕터 1 · PBPK 기본 모델'},
   start:'g1',startLabel:'2-1단계부터 시작',
-  flowHtml:'<h3>2-1~2-5단계 흐름</h3><div class="scroll-x"><table>'+
-    '<tr><th>단계</th><th>하는 일</th><th>확인할 것</th></tr>'+
-    '<tr><td>2-1 로트카–볼테라</td><td>공생균 vs 기회균 2군 경쟁</td><td>로지스틱 해석해 ✓, 평형점</td></tr>'+
-    '<tr><td>2-2 교란·회복</td><td>장염 · 항생제 · FIP 교란과 회복</td><td>교란을 끄면 평형 유지</td></tr>'+
-    '<tr><td>2-3 대사산물→P-gp</td><td>대사산물과 P-gp 발현 (간접 반응)</td><td>평형에서 P_gp = 1</td></tr>'+
-    '<tr><td>2-4 PBPK 연결</td><td>P-gp → k_out, 설사 → k_tr, 장 3구획 + 모델 1</td><td>질량 보존 ✓, 교란 전·중·후 비교</td></tr>'+
-    '<tr><td>2-5 분석</td><td>k_in·k_out·k_tr 배수 민감도, 분석 화면</td><td>질량 보존 ✓</td></tr>'+
-    '</table></div>',
+  flowHtml:'<h3>2-1~2-5단계 흐름 (발표 순서)</h3><div class="scroll-x"><table>'+
+    '<tr><th>단계</th><th>묻는 질문 (의도)</th><th>하는 일</th><th>확인할 것</th></tr>'+
+    '<tr><td>2-1 로트카–볼테라</td><td>장내 미생물의 “정상 상태”는 무엇인가?</td><td>공생균 vs 기회균 2군 경쟁</td><td>로지스틱 해석해 ✓, 평형점</td></tr>'+
+    '<tr><td>2-2 교란·회복</td><td>장염·항생제·FIP가 균형을 얼마나, 얼마 동안 흔드나?</td><td>교란과 회복</td><td>교란을 끄면 평형 유지, 최저점과 회복 시간</td></tr>'+
+    '<tr><td>2-3 대사산물→P-gp</td><td>미생물 변화가 수송체로 어떻게, 얼마나 늦게 전달되나?</td><td>대사산물과 P-gp 발현 (간접 반응)</td><td>평형에서 P_gp = 1, 최저점 순서와 지연</td></tr>'+
+    '<tr><td>2-4 PBPK 연결</td><td>그래서 혈중 농도와 F는 어느 방향으로, 언제 바뀌나?</td><td>P-gp → k_out, 설사 → k_tr, 장 3구획 + 모델 1</td><td>질량 보존 ✓, 교란 전·중·후 AUCτ와 F(t)</td></tr>'+
+    '<tr><td>2-5 분석</td><td>그 결론은 가정(분배·배수)을 바꿔도 유지되나?</td><td>k_in·k_out·k_tr 배수 민감도, 분석 화면</td><td>질량 보존 ✓, 프리셋별 방향 유지</td></tr>'+
+    '</table></div>'+
+    '<p>각 단계 카드의 <b>의도</b>는 그 단계가 답하는 질문, <b>지금 결과 읽기</b>는 현재 값으로 만든 해석 문장, <b>해석 가이드</b>는 그래프를 읽는 법과 발표할 때 주의할 점입니다. 변수 카드의 <b>표</b> 보기로 단계의 변수를 한눈에 정리할 수 있습니다.</p>',
   build:api=>Ch2(api)
 };
 })(globalThis);

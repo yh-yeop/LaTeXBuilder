@@ -167,6 +167,11 @@ details.bulk textarea{width:100%;margin-top:6px;min-height:58px;resize:vertical}
 .verdict{margin-top:8px;font-size:12.8px;border-radius:8px;padding:7px 10px}
 .verdict.pass{background:var(--ok-soft);color:var(--ok)}
 .verdict.part,.verdict.fail{background:var(--warn-soft);color:var(--warn)}
+.guide{margin-top:10px;background:var(--accent-soft);border-radius:8px;padding:9px 12px;font-size:13px;line-height:1.6}
+.guide-h,.guide summary{font-weight:650;cursor:default}
+.guide summary{cursor:pointer;margin-top:4px}
+.guide ul{margin:4px 0 2px;padding-left:18px}
+.guide li{margin:2px 0}
 .helpbtn{font:inherit;font-size:11.5px;font-weight:700;width:20px;height:20px;border-radius:50%;border:1px solid var(--border);background:var(--surface2);color:var(--muted);cursor:pointer;margin-left:8px;vertical-align:1px;line-height:1;padding:0}
 .helpbtn[aria-expanded="true"]{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
 .helpbox{background:var(--accent-soft);border-radius:8px;padding:10px 12px;font-size:12.8px;margin:0 0 10px;line-height:1.65}
@@ -180,6 +185,16 @@ details.bulk textarea{width:100%;margin-top:6px;min-height:58px;resize:vertical}
 .linkbtn{font:inherit;font-size:12px;background:none;border:0;color:var(--accent);cursor:pointer;padding:0;text-decoration:underline}
 .filterbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
 .filterbar input{flex:1;min-width:160px}
+.seg2{display:inline-flex;border:1px solid var(--border);border-radius:7px;overflow:hidden}
+.seg2 button{font:inherit;font-size:12.5px;border:0;background:var(--surface);color:var(--text);padding:4px 10px;cursor:pointer}
+.seg2 button[aria-pressed="true"]{background:var(--accent);color:var(--accent-text);font-weight:650}
+table.vt td,table.vt th{text-align:left;vertical-align:top}
+table.vt td.num{text-align:right;font-variant-numeric:tabular-nums}
+table.vt td.note{white-space:normal;min-width:220px;color:var(--muted)}
+table.vt td.ex{white-space:normal;min-width:160px}
+table.vt tbody tr{cursor:pointer}
+table.vt tbody tr:hover{background:var(--surface2)}
+table.vt .lbl{min-width:0;min-height:0;padding:0}
 .eqcard.collapsed{padding:6px 10px}
 .eqmini-row{display:flex;gap:8px;align-items:center}
 .eqmini{flex:1;min-width:0;overflow-x:auto;overflow-y:hidden;cursor:pointer}
@@ -831,7 +846,7 @@ const HELP_HTML=`
 </ul>`;
 let M=defaultModel(), hadStored=false;
 try{ const raw=localStorage.getItem(LS_KEY); if(raw){ M=normalize(JSON.parse(raw)); hadStored=true; } }catch(e){}
-const S={collapsed:new Set(),helpOpen:new Set(),varQ:'',varF:'',result:null,hidden:new Set(),hover:null,layout:null,f:null,P:null,compile:null,warnings:[],cmp:[],exps:[],eventTimes:[],sweepJob:0,sweepPending:false};
+const S={collapsed:new Set(),helpOpen:new Set(),varQ:'',varF:'',varView:'card',result:null,hidden:new Set(),hover:null,layout:null,f:null,P:null,compile:null,warnings:[],cmp:[],exps:[],eventTimes:[],sweepJob:0,sweepPending:false};
 let saveTimer=0;
 function save(){ clearTimeout(saveTimer); saveTimer=setTimeout(()=>{ try{ localStorage.setItem(LS_KEY,JSON.stringify(M)); }catch(e){} },300); }
 
@@ -892,13 +907,15 @@ function setMath(el,tex,display){
   catch(e){ el.textContent=tex; el.classList.add('rawtex'); }
 }
 function rerenderMath(){ document.querySelectorAll('[data-tex]').forEach(el=>setMath(el,el.dataset.tex,el.dataset.display==='1')); }
+// tex2svg만 쓰면 MathJax 스타일시트가 붙지 않아 화면 낭독용 MathML(mjx-assistive-mml)이 수식 옆에 그대로 보인다
+function addMathStyles(){ try{ if(!document.getElementById('MJX-SVG-styles')) document.head.appendChild(window.MathJax.svgStylesheet()); }catch(e){} }
 function loadMathJax(){
   window.MathJax={startup:{typeset:false},svg:{fontCache:'none'}};
   const s=document.createElement('script');
   s.src='https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.min.js'; s.async=true;
   s.onload=()=>{
     const pr=window.MathJax&&window.MathJax.startup&&window.MathJax.startup.promise;
-    Promise.resolve(pr).then(()=>{ mathReady=true; rerenderMath(); }).catch(()=>{});
+    Promise.resolve(pr).then(()=>{ addMathStyles(); mathReady=true; rerenderMath(); }).catch(()=>{});
   };
   s.onerror=()=>toast('수식 렌더러를 불러오지 못해 LaTeX 원문으로 표시합니다');
   document.head.appendChild(s);
@@ -1919,16 +1936,22 @@ function loadPreset(v){
   renderAll();
   toast((M.info?M.info.title:'모델')+'을(를) 불러왔습니다');
 }
+function interpCtx(){
+  const R=S.result.main, idx={}; M.eqs.forEach((q,i)=>{ idx[q.state]=i; });
+  return {T:R.T,Y:R.Y,P:S.P,idx,exps:S.exps||[],cmp:S.cmp||[],fmt,windowStats,interp1,
+    col:s=>R.Y.map(y=>y[idx[s]]),
+    series:txt=>{ const f=S.compile.expr(txt); return R.T.map((t,k)=>f(t,R.Y[k],S.P)); }};
+}
 function renderInfo(){
   const el=$('#infoCard'); if(!el) return; el.replaceChildren();
   const cur=M.info&&M.info.key;
   el.append(h('div',{class:'card-h'},h('h2',{},'진행 단계'),h('span',{class:'muted',style:'font-size:12px'},'누르면 그 단계 모델로 바뀝니다')));
   el.append(h('div',{class:'stepper'},STAGES.map(([k,lab])=>h('button',{class:'step'+(k===cur?' on':''),'aria-current':k===cur?'step':null,onclick:()=>loadPreset(k)},lab))));
   if(!M.info){ el.append(h('p',{class:'hint',style:'margin:10px 0 0'},'지금은 직접 만든 모델입니다. 단계를 불러오면 목적과 확인할 곳이 여기에 표시됩니다.')); return; }
-  const I=M.info;
+  const I=Object.assign({},M.info,INFO[M.info.key]||{});   // 설명 글은 저장된 모델보다 현재 단계 정의를 따른다
   el.append(h('h3',{class:'stage-title'},I.title));
   const dl=h('dl',{class:'stage-dl'});
-  [['목적',I.goal],['볼 곳',I.look],['기준',I.pass],['주의',I.warn]].forEach(([k,v])=>{ if(v) dl.append(h('dt',{},k),h('dd',{},v)); });
+  [['의도',I.why],['목적',I.goal],['볼 곳',I.look],['기준',I.pass],['주의',I.warn]].forEach(([k,v])=>{ if(v) dl.append(h('dt',{},k),h('dd',{},v)); });
   el.append(dl);
   const strict=(S.cmp||[]).filter(c=>c.strict);
   if(strict.length){
@@ -1940,6 +1963,12 @@ function renderInfo(){
     const pass=x.auc>=220&&x.above[0]>=23&&x.above[1]>=9;
     el.append(h('div',{class:'verdict '+(pass?'pass':'fail')},x.label+' · Cooke 목표 대비: AUC '+fmt(x.auc,3)+' / 220 µM·h, 3 µM 초과 '+fmt(x.above[0],3)+' / 23 h, 10 µM 초과 '+fmt(x.above[1],3)+' / 9 h'));
   });
+  // 해석 가이드: 지금 결과를 문장으로 읽어 주는 줄(interpret)과 단계별 읽는 법(guide). 단계 정의에 있을 때만 표시
+  let lines=[];
+  if(typeof I.interpret==='function'&&S.result) try{ lines=I.interpret(interpCtx())||[]; }catch(e){ lines=[]; }
+  if(lines.length||(I.guide&&I.guide.length)) el.append(h('div',{class:'guide'},
+    lines.length?[h('div',{class:'guide-h'},'지금 결과 읽기'),h('ul',{},lines.map(x=>h('li',{},x)))]:null,
+    I.guide&&I.guide.length?h('details',{open:true},h('summary',{},'해석 가이드'),h('ul',{},I.guide.map(x=>h('li',{},x)))):null));
   if(I.link) el.append(h('div',{class:'row',style:'margin-top:12px'},h('a',{class:'btn sm',href:I.link.href,style:'text-decoration:none'},I.link.label)));
   if(I.next){ const nx=STAGES.find(z=>z[0]===I.next); el.append(h('div',{class:'row',style:'margin-top:12px'},h('button',{class:'btn sm primary',onclick:()=>loadPreset(I.next)},'다음 단계 불러오기 ('+nx[1]+')'))); }
 }
@@ -2254,6 +2283,35 @@ function varCard(v,used){
   }
   return card;
 }
+// 변수 표: 식 변수는 시작 시각(t0, 초깃값)에서 계산한 값을 같이 보여 준다
+function varValues(){
+  const out=new Map(); const C=S.compile; if(!C||C.errors.length) return out;
+  const P={}; M.vars.forEach(v=>{ if(v.kind==='param') P[v.name]=num(v.value); });
+  const y0=M.eqs.map(q=>num(q.ic)), t0=num(M.sim.t0);
+  M.vars.forEach(v=>{ if(v.kind!=='func') return; try{ const x=C.expr(v.name)(t0,y0,P); if(Number.isFinite(x)) out.set(v.name,x); }catch(e){} });
+  return out;
+}
+function varTable(vs,used,onPick){
+  const vals=varValues(), t0=fmt(num(M.sim.t0),4);
+  const rows=vs.map(v=>{
+    const lbl=h('span',{class:'lbl'}); setMath(lbl,labelOf(v.name),false);
+    const isF=v.kind==='func', fv=vals.get(v.name);
+    return h('tr',{title:'눌러서 이 변수 카드 열기',onclick:()=>onPick(v)},
+      h('td',{},lbl),h('td',{class:'mono'},v.name,used.has(v.name)?null:h('div',{class:'muted',style:'font-size:11px'},'식에서 안 씀')),
+      h('td',{class:'num mono'},isF?(fv==null?'–':fmt(fv,4)):fmt(num(v.value),4)),
+      h('td',{},v.unit||''),
+      h('td',{class:'ex mono'},isF?v.expr:h('span',{class:'muted'},'상수 · '+fmt(num(v.min),3)+'–'+fmt(num(v.max),3)+(v.log?' (로그)':''))),
+      h('td',{},tagEl(v.tag)),h('td',{class:'note'},v.note||''));
+  });
+  return h('div',{class:'scroll-x'},h('table',{class:'m vt'},
+    h('thead',{},h('tr',{},h('th',{},'표기'),h('th',{},'이름'),h('th',{},'값 (식은 t = '+t0+')'),h('th',{},'단위'),h('th',{},'식 · 슬라이더 범위'),h('th',{},'근거'),h('th',{},'메모'))),
+    h('tbody',{},rows)));
+}
+function varCsv(vs){
+  const vals=varValues(), q=x=>{ const s=String(x==null?'':x); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
+  return [['이름','LaTeX','종류','값','단위','식','최솟값','최댓값','근거','메모'].join(',')].concat(vs.map(v=>[v.name,v.latex||'',v.kind==='func'?'식':'상수',
+    v.kind==='func'?(vals.has(v.name)?vals.get(v.name):''):num(v.value),v.unit||'',v.kind==='func'?v.expr:'',v.kind==='func'?'':v.min,v.kind==='func'?'':v.max,v.tag||'',v.note||''].map(q).join(','))).join('\n');
+}
 function renderVars(){
   const root=$('#varCard'); root.replaceChildren();
   const clearF=()=>{ S.varQ=''; S.varF=''; };
@@ -2272,19 +2330,26 @@ function renderVars(){
   f.value=S.varF;
   const cnt=h('span',{class:'muted',style:'font-size:12px'});
   const list=h('div',{});
-  const fill=()=>{
-    const used=usedNames(); const qq=S.varQ.trim().toLowerCase(); list.replaceChildren(); let n=0;
-    M.vars.forEach(v=>{
-      if(S.varF==='param'||S.varF==='func'){ if(v.kind!==S.varF) return; } else if(S.varF&&v.tag!==S.varF) return;
-      if(qq&&![v.name,v.note||'',v.unit||'',v.latex||''].some(x=>x.toLowerCase().includes(qq))) return;
-      list.append(varCard(v,used.has(v.name))); n++;
+  const shown=()=>{
+    const qq=S.varQ.trim().toLowerCase();
+    return M.vars.filter(v=>{
+      if(S.varF==='param'||S.varF==='func'){ if(v.kind!==S.varF) return false; } else if(S.varF&&v.tag!==S.varF) return false;
+      return !qq||[v.name,v.note||'',v.unit||'',v.latex||''].some(x=>x.toLowerCase().includes(qq));
     });
-    cnt.textContent=n+' / '+M.vars.length+'개 표시';
-    if(!n) list.append(h('p',{class:'muted',style:'margin:0'},'조건에 맞는 변수가 없습니다. 검색어나 거르기를 바꿔 보세요.'));
+  };
+  const fill=()=>{
+    const used=usedNames(), vs=shown(); list.replaceChildren();
+    if(S.varView==='table'&&vs.length) list.append(varTable(vs,used,v=>{ S.varView='card'; S.varQ=v.name; S.varF=''; renderVars(); }));
+    else vs.forEach(v=>list.append(varCard(v,used.has(v.name))));
+    cnt.textContent=vs.length+' / '+M.vars.length+'개 표시';
+    if(!vs.length) list.append(h('p',{class:'muted',style:'margin:0'},'조건에 맞는 변수가 없습니다. 검색어나 거르기를 바꿔 보세요.'));
   };
   q.addEventListener('input',()=>{ S.varQ=q.value; fill(); });
   f.addEventListener('change',()=>{ S.varF=f.value; fill(); });
-  root.append(h('div',{class:'filterbar'},q,f,cnt),list);
+  const view=h('div',{class:'seg2',role:'group','aria-label':'보기 방식'},[['card','카드'],['table','표']].map(([k,l])=>
+    h('button',{'aria-pressed':String(S.varView===k),onclick:()=>{ if(S.varView===k) return; S.varView=k; renderVars(); }},l)));
+  const csv=S.varView==='table'?h('button',{class:'btn sm',onclick:()=>openDialog('변수 표 (CSV)',varCsv(shown()),{hint:'지금 보이는 변수(검색·거르기 적용)입니다. 복사해서 스프레드시트에 붙여 넣으세요.'})},'표 복사(CSV)'):null;
+  root.append(h('div',{class:'filterbar'},q,f,view,csv,cnt),list);
   fill();
   updateNameList();
   attachHelp(root,'var');
