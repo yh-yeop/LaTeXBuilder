@@ -166,12 +166,12 @@ function Ch2(api){
       goal:'2-3의 P-gp 발현을 출구 속도 k_out에, 장염 중 설사를 통과 속도 k_tr에 연결하고, 장 3구획과 챕터 1 모델 1 몸을 붙여 28일 투약을 계산합니다. F는 입력이 아니라 결과값입니다.',
       look:'노출 지표의 교란 전·장염 중·마지막 간격 비교, F(t) 닫힌 식, 그래프의 C_b와 P_gp',
       pass:'질량 보존 ✓. 교란을 모두 끄면 2-5(배수 1)와 같은 결과가 됩니다.',
-      warn:'P-gp가 줄면 F가 오르고 설사로 통과가 빨라지면 F가 내려가, 장염 때 두 효과가 겹칩니다. 기준 속도는 Cook 2022 Cmax에 맞춘 값(F 0.6 가정)이라 흡수가 관측보다 매우 빠릅니다. 투약 일정은 모델 1 기본(12 mg/kg, 하루 1회)에서 기간만 28일로 늘렸습니다. '+NO_CAT,next:'g5',show:['C_b','P_gp']},
+      warn:'P-gp가 줄면 F가 오르고 설사로 통과가 빨라지면 F가 내려가, 장염 때 두 효과가 겹칩니다. 기준 속도는 Cook 2022 Cmax에 맞춘 값(F 0.6 가정)이라 흡수가 관측보다 매우 빠릅니다. 투약 일정은 모델 1 기본(12 mg/kg, 하루 1회)에서 기간만 28일로 늘렸습니다. '+NO_CAT,next:'g5',show:['C_b','P_gp'],hideCmp:[0]},
     g5:{title:'2-5 · 분석 (배수로 본 민감도)',
       goal:'미생물을 빼고 k_in·k_out·k_tr 배수를 직접 바꿔 F와 농도가 어느 방향으로 바뀌는지 봅니다. 시나리오 겹쳐 그리기, 분배 프리셋 비교, 입구×출구 히트맵은 분석 화면에서 봅니다.',
       look:'변수 카드의 m_in·m_out·m_tr 슬라이더, 질량 보존',
       pass:'질량 보존 ✓. 배수가 모두 1이면 2-4에서 교란을 끈 결과와 같습니다.',
-      warn:NO_CAT,next:null,show:['C_b'],link:{href:'analysis.html',label:'분석 화면 열기 (시나리오 · 프리셋 비교 · 히트맵)'}}
+      warn:NO_CAT,next:null,show:['C_b'],hideCmp:[0],link:{href:'analysis.html',label:'분석 화면 열기 (시나리오 · 프리셋 비교 · 히트맵)'}}
   };
   // 식 변수 설명 (변수 표·발표용)
   Object.assign(ann,{
@@ -297,7 +297,7 @@ G.STAGE_PACK={
   title:'챕터 2 · 장내 미생물 → PBPK',
   brand:['챕터 2 · 장내 미생물 → PBPK','로트카–볼테라로 장내 미생물을 보고, 대사산물·P-gp를 거쳐 PBPK에 연결합니다'],
   keys:{model:'ch2-equation-builder-v1',presets:'ch2-builder-presets-v1',welcome:'ch2-builder-welcome-v1'},
-  link:{href:'../index.html',label:'← 챕터 1 · PBPK 기본 모델'},
+  links:[{href:'../index.html',label:'← 챕터 1 · PBPK 기본 모델'},{href:'../chapter3/',label:'챕터 3 · 바이러스와 약물 작용'}],
   start:'g1',startLabel:'2-1단계부터 시작',
   flowHtml:'<h3>2-1~2-5단계 흐름 (발표 순서)</h3><div class="scroll-x"><table>'+
     '<tr><th>단계</th><th>묻는 질문 (의도)</th><th>하는 일</th><th>확인할 것</th></tr>'+

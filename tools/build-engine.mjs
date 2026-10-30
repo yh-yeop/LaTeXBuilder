@@ -31,10 +31,11 @@ export function buildEngine() {
   const body = src.slice(0, at).replace(/^\(function\(\)\{/, 'globalThis.PBPK=(function(){') + `return ${EXPORTS};\n})();`;
   return '// 자동 생성 파일입니다. 직접 고치지 마세요.\n// 원본: index.html의 <script> (챕터 1). 다시 만들기: node tools/build-engine.mjs\n' + body + '\n';
 }
-// 챕터 2 편집기 페이지: index.html을 그대로 쓰되 단계 묶음(stages.js)과 색(theme.css)만 끼운다.
+// 챕터 편집기 페이지: index.html을 그대로 쓰되 단계 묶음(stages.js)과 색(theme.css)만 끼운다.
 // 진행 단계·설명·저장 키 등은 index.html이 STAGE_PACK을 읽어 바꾼다.
+export const CHAPTER_DIRS = ['chapter2', 'chapter3'];
 export const PAGE = path.join(root, 'chapter2', 'index.html');
-export function buildChapter2Page() {
+export function buildChapterPage() {
   const html = lf(readFileSync(path.join(root, 'index.html'), 'utf8'));
   const MAIN = '<script>\n(function(){';
   if (html.split(MAIN).length !== 2 || !html.includes('</head>') || !html.startsWith('<!DOCTYPE html>\n'))
@@ -45,13 +46,13 @@ export function buildChapter2Page() {
     .replace(MAIN, '<script src="stages.js"></script>\n' + MAIN);
 }
 
-const TARGETS = [[OUT, buildEngine], [PAGE, buildChapter2Page]];
+const TARGETS = [[OUT, buildEngine], ...CHAPTER_DIRS.map(d => [path.join(root, d, 'index.html'), buildChapterPage])];
 export const isFresh = () => TARGETS.every(([f, b]) => existsSync(f) && lf(readFileSync(f, 'utf8')) === b());
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv.includes('--check')) {
-    const stale = TARGETS.filter(([f, b]) => !(existsSync(f) && lf(readFileSync(f, 'utf8')) === b())).map(([f]) => path.basename(f));
-    console.log(stale.length ? `chapter2/${stale.join(', chapter2/')}가 index.html과 다릅니다. node tools/build-engine.mjs를 실행하세요` : 'engine.gen.js · index.html(챕터 2) 최신 상태');
+    const stale = TARGETS.filter(([f, b]) => !(existsSync(f) && lf(readFileSync(f, 'utf8')) === b())).map(([f]) => path.relative(root, f).split(path.sep).join('/'));
+    console.log(stale.length ? `${stale.join(', ')}가 index.html과 다릅니다. node tools/build-engine.mjs를 실행하세요` : '생성 파일 최신 상태 (engine.gen.js · 챕터 편집기 ' + CHAPTER_DIRS.length + '개)');
     process.exit(stale.length ? 1 : 0);
   }
   for (const [f, b] of TARGETS) { writeFileSync(f, b()); console.log('생성: ' + f); }

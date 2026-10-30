@@ -1588,6 +1588,7 @@ function loadPreset(v){
   S.hidden.clear(); S.collapsed.clear(); S.varQ=''; S.varF='';
   const vis=(M.info&&M.info.show)||['C_b'];   // 처음에 보이는 곡선 (챕터 1은 C_b)
   if(v!=='m0') M.eqs.forEach(q=>{ if(!vis.includes(q.state)) S.hidden.add(q.state); });
+  ((M.info&&M.info.hideCmp)||[]).forEach(ci=>S.hidden.add('cmp:'+ci));   // 기준 곡선이 그래프를 가릴 때 (예: 누적 투여량)
   if(M.eqs.length>4) M.eqs.forEach(q=>{ if(!vis.includes(q.state)) S.collapsed.add(q.state); });
   $('#optCdot').checked=!!M.opts.cdot; $('#optBreak').checked=!!M.opts.breakTerms; $('#optLog').checked=!!M.opts.logY;
   renderAll();
@@ -1595,7 +1596,9 @@ function loadPreset(v){
 }
 function interpCtx(){
   const R=S.result.main, idx={}; M.eqs.forEach((q,i)=>{ idx[q.state]=i; });
+  const sig=(x,p)=>Number.isFinite(x)?String(parseFloat(x.toPrecision(p||3))):String(x);
   return {T:R.T,Y:R.Y,P:S.P,idx,exps:S.exps||[],cmp:S.cmp||[],fmt,windowStats,interp1,
+    f3:x=>sig(x,3),pct:x=>sig(x*100,3)+'%',
     col:s=>R.Y.map(y=>y[idx[s]]),
     series:txt=>{ const f=S.compile.expr(txt); return R.T.map((t,k)=>f(t,R.Y[k],S.P)); }};
 }
@@ -2625,7 +2628,10 @@ function bind(){
     document.title=PACK.title;
     const br=$('.brand'); br.querySelector('h1').textContent=PACK.brand[0]; br.querySelector('p').textContent=PACK.brand[1];
     $('#presetSel').replaceChildren(h('option',{value:''},'단계 불러오기…'),...PACK_OPTIONS.map(([k,lab])=>h('option',{value:k},lab)));
-    const cl=$('#chapLink'); cl.href=PACK.link.href; cl.textContent=PACK.link.label;
+    const c2=$('#chapLink2'); if(c2) c2.remove();
+    const cl=$('#chapLink'), ls=PACK.links||[PACK.link];
+    cl.href=ls[0].href; cl.textContent=ls[0].label;
+    ls.slice(1).reduce((prev,x)=>{ const a=h('a',{class:'btn',href:x.href,style:'text-decoration:none'},x.label); prev.after(a); return a; },cl);
     $('#wStart').textContent=PACK.startLabel;
   }
   $('#optCdot').checked=!!M.opts.cdot; $('#optBreak').checked=!!M.opts.breakTerms; $('#optLog').checked=!!M.opts.logY;

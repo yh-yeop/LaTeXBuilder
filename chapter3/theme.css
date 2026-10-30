@@ -1,0 +1,6 @@
+/* 챕터 3 강조색 (챕터 1·2와 구분). index.html의 색 토큰과 같은 선택자로 덮어쓴다. */
+:root{ --accent:#8a3ffc; --accent-soft:#eee4ff; --accent-text:#ffffff; --bg:#f0ecf5; }
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){ --accent:#b79dff; --accent-soft:#2a2246; --accent-text:#120f1a; --bg:#120f1a; }
+}
+:root[data-theme="dark"]{ --accent:#b79dff; --accent-soft:#2a2246; --accent-text:#120f1a; --bg:#120f1a; }
