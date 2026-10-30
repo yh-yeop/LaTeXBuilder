@@ -1,7 +1,6 @@
-// 챕터 2 · 장 상태 시나리오 모델.
-// 몸(혈액·장기·복수) 식은 챕터 1의 3단계 모델 1을 그대로 가져오고, 장관 구획만 3구획(내강·장 세포·대변)으로 바꾼다.
-// F는 입력이 아니라 결과값이다. 투여량 전체가 내강 A_L로 들어간다.
-// 브라우저와 Node(검증 스크립트) 양쪽에서 쓴다. engine.gen.js(globalThis.PBPK)가 먼저 로드되어 있어야 한다.
+// 챕터 2 분석 화면(analysis.html, 2-5단계)의 계산: 보정, 닫힌 식, 해석해, 시나리오 실행.
+// 모델 자체(장 3구획 + 모델 1 몸)는 stages.js의 Ch2.gutModel을 쓴다. F는 입력이 아니라 결과값이다.
+// 브라우저와 Node(검증 스크립트) 양쪽에서 쓴다. engine.gen.js(globalThis.PBPK)와 stages.js가 먼저 로드되어 있어야 한다.
 (function(G){
 'use strict';
 const E=G.PBPK;
@@ -85,41 +84,10 @@ function gutChainAnalytic(k_in,k_b,D){
   };
 }
 
-/* ---------- 모델 만들기 (모델 1 + 3구획 장관) ---------- */
-const BODY_SUM=()=>'V_b*C_b + '+E.ORG.map(o=>'V_'+o[0]+'*C_'+o[0]).join(' + ')+' + V_asc*C_asc + A_el';
-function buildModel(k0){
-  const m=E.presets.m1();      // 챕터 1 3단계와 같은 몸 (값·식 동일)
-  const PV=E.PV, FV=E.FV, T_=E.T_;
-  m.vars=m.vars.filter(v=>v.name!=='F'&&v.name!=='ka');
-  const K=(name,latex,x)=>PV(name,latex,x,0,(x>0?x:1)*8,'1/h');   // 0도 그대로 둔다 (극한 조건 검증용)
-  m.vars.push(
-    K('k_in0','k_{in,0}',k0.k_in),K('k_out0','k_{out,0}',k0.k_out),K('k_b0','k_{b,0}',k0.k_b),K('k_tr0','k_{tr,0}',k0.k_tr),
-    Object.assign(PV('m_in','m_{in}',1,MULT_MIN,MULT_MAX,'배'),{log:true}),
-    Object.assign(PV('m_out','m_{out}',1,MULT_MIN,MULT_MAX,'배'),{log:true}),
-    Object.assign(PV('m_tr','m_{tr}',1,MULT_MIN,MULT_MAX,'배'),{log:true}),
-    FV('k_in','k_{in}','k_in0*m_in','1/h'),FV('k_out','k_{out}','k_out0*m_out','1/h'),FV('k_b','k_b','k_b0','1/h'),FV('k_tr','k_{tr}','k_tr0*m_tr','1/h'));
-  const gi=m.eqs.findIndex(q=>q.state==='A_gut');
-  m.eqs.splice(gi,1,
-    {state:'A_L',latex:'A_L',cap:'1',ic:0,unit:'mg',terms:[T_(-1,'k_in*A_L'),T_(1,'k_out*A_E'),T_(-1,'k_tr*A_L')]},
-    {state:'A_E',latex:'A_E',cap:'1',ic:0,unit:'mg',terms:[T_(1,'k_in*A_L'),T_(-1,'k_out*A_E'),T_(-1,'k_b*A_E')]});
-  const cb=m.eqs.find(q=>q.state==='C_b');
-  const ti=cb.terms.findIndex(tm=>tm.expr==='ka*A_gut');
-  if(ti<0) throw new Error('모델 1의 혈액 식에서 흡수 항(ka*A_gut)을 찾지 못했습니다');
-  cb.terms[ti]=T_(1,'k_b*A_E');
-  m.eqs.push(
-    {state:'A_fec',latex:'A_{fec}',cap:'1',ic:0,unit:'mg',terms:[T_(1,'k_tr*A_L')]},
-    {state:'A_abs',latex:'A_{abs}',cap:'1',ic:0,unit:'mg',terms:[T_(1,'k_b*A_E')]});
-  m.doses=[{on:true,label:'경구 투여 (용량 전체가 내강으로, F를 곱하지 않음)',target:'A_L',amt:'Dmg',start:'0',tau:'tau',n:'N_d'}];
-  m.cmps=[{on:true,strict:true,label:'질량 보존 (장 내강 + 장 세포 + 대변 + 몸 + 소실 vs 누적 투여)',sim:'A_L + A_E + A_fec + '+BODY_SUM(),kind:'ref',ref:'Dmg*n_d',data:''}];
-  m.exps=[];
-  m.info=null;
-  m.opts.breakTerms=false;   // 수식 표시만 바뀜 (계산과 무관)
-  m.sim.rtol=1e-7;
-  // 적분기는 명시적(Dormand–Prince)으로 고정. 챕터 1 기본값 'auto'는 이 모델에서 Rodas3로 바뀌어 약 2.7배 느리고
-  // (시나리오·히트맵은 수십 번 돌린다) 결과 차이는 1e-5 수준이다.
-  m.sim.method='explicit';
-  return m;
-}
+/* ---------- 모델 만들기: 장 3구획 + 모델 1 몸 (stages.js의 Ch2.gutModel, 챕터 2 편집기 2-5단계와 같은 정의) ---------- */
+if(!G.Ch2) throw new Error('stages.js를 먼저 불러와야 합니다');
+const C2=G.Ch2({PV:E.PV,FV:E.FV,T_:E.T_,ORG:E.ORG,normalize:E.normalize,presets:{m1:E.presets.m1}});
+const BODY_SUM=C2.BODY_SUM, buildModel=C2.gutModel;
 
 /* ---------- 실행 ---------- */
 function paramsOf(m){ const P={}; m.vars.forEach(v=>{ if(v.kind==='param') P[v.name]=E.num(v.value); }); return P; }

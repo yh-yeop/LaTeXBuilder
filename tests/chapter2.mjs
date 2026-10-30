@@ -1,18 +1,14 @@
 // 챕터 2 검증. 모두 통과해야 exit 0.
 //   node tests/chapter2.mjs
-import { buildEngine } from '../tools/build-engine.mjs';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
-import { Gut } from './load-ch2.mjs';
+import { isFresh } from '../tools/build-engine.mjs';
+import { Gut, E, Ch2 } from './load-ch2.mjs';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
 const results = [];
 const check = (name, ok, detail) => { results.push({ name, ok, detail }); console.log((ok ? '✓ ' : '✗ ') + name + ' — ' + detail); };
 const e = x => x.toExponential(2);
 
 // 0. 엔진 추출본이 index.html과 같은지
-check('엔진 추출본 최신', readFileSync(path.join(here, '..', 'chapter2', 'engine.gen.js'), 'utf8') === buildEngine(), 'chapter2/engine.gen.js == index.html에서 새로 추출한 결과');
+check('생성 파일 최신', isFresh(), 'chapter2/engine.gen.js · chapter2/index.html == index.html에서 새로 만든 결과');
 
 // 보정 (기본 기준 F, 프리셋 3개)
 const cal = Gut.PARTITIONS.map(p => ({ p, c: Gut.calibrate(Gut.F_BASE_DEFAULT, p.po) }));
@@ -105,6 +101,59 @@ const D = m => m.vars.find(v => v.name === 'BW').value * m.vars.find(v => v.name
     worst = Math.max(worst, Math.abs(Gut.Fclosed(Gut.applyMult(c.k0, { m_in: mi, m_out: mo, m_tr: mt })) / c.F - 1));
   }
   check('F 비율 = 1 경계선 식', worst < 1e-12, `최대 |F비율 − 1| ${e(worst)}`);
+}
+
+/* ================= 챕터 2 단계 (2-1 ~ 2-5, stages.js) ================= */
+const C2 = Ch2({ PV: E.PV, FV: E.FV, T_: E.T_, ORG: E.ORG, normalize: E.normalize, presets: { m1: E.presets.m1 } });
+{
+  const c = Gut.calibrate(0.6, 0.5);
+  const d = Math.max(...Object.keys(C2.K0).map(k => Math.abs(C2.K0[k] / c.k0[k] - 1)));
+  check('단계 기준 속도 K0 = 보정 결과', d < 1e-9, `stages.js K0 vs calibrate(F 0.6, 균형) 최대 상대차 ${e(d)}`);
+}
+const stage = (key, over, opt) => {
+  const m = C2.presets[key](), C = Gut.compileModel(m), r = Gut.simulate(m, C, over, opt);
+  E.setM(m); const cmp = E.computeCmp(C, r.P, { T: r.T, Y: r.Y }, []);
+  return { m, C, r, cmp };
+};
+const col = (r, s) => r.Y.map(y => y[r.idx[s]]);
+const OFF = { en_on: 0, ab_on: 0, fip_on: 0 };
+// 2-1: 로지스틱 해석해(경쟁자 없는 y_c), 평형점
+{
+  const { r, cmp } = stage('g1');
+  const P = r.P, f = t => 1 / (1 + (1 / P.x0 - 1) * Math.exp(-P.r_c * t));
+  const er = nodeErr(r, ['y_c'], [f]);
+  check('2-1 로지스틱 해석해 (y_c)', er.norm < 1e-9 && cmp[0].met.maxR < 0.1, `적분 시점 최대오차/최댓값 ${e(er.norm)} (기준 1e-9), 화면 비교 최대 상대오차 ${cmp[0].met.maxR.toExponential(2)}% (기준 0.1%)`);
+  const xc = col(r, 'x_c').at(-1), xo = col(r, 'x_o').at(-1);
+  const xcs = (1 - P.a_co) / (1 - P.a_co * P.a_oc), xos = (1 - P.a_oc) / (1 - P.a_co * P.a_oc);
+  const d = Math.max(Math.abs(xc / xcs - 1), Math.abs(xo / xos - 1));
+  check('2-1 끝값 → 평형점 닫힌 식', d < 1e-3, `x_c ${xc.toFixed(6)} / ${xcs.toFixed(6)}, x_o ${xo.toFixed(6)} / ${xos.toFixed(6)}, 최대 상대차 ${e(d)} (1440 h, 기준 1e-3)`);
+}
+// 2-2: 교란을 끄면 평형 유지, 기본 교란(장염)의 깊이와 회복
+{
+  const off = stage('g2', OFF).r, d = Math.max(...['x_c', 'x_o'].map(s => Math.max(...col(off, s).map(v => Math.abs(v - col(off, s)[0])))));
+  check('2-2 교란 끄면 평형 유지', d < 1e-9, `x_c·x_o 최대 변화 ${e(d)}`);
+  const { r } = stage('g2'), xc = col(r, 'x_c'), eq = xc[0], mn = Math.min(...xc);
+  check('2-2 장염 후 회복 (참고)', xc.at(-1) / eq > 0.99, `공생균 최저 ${(mn / eq * 100).toFixed(1)}% → 720 h에 ${(xc.at(-1) / eq * 100).toFixed(2)}% (평형 대비)`);
+}
+// 2-3: 교란을 끄면 S_m = P_gp = 1, 기본 교란에서 P-gp 최저
+{
+  const off = stage('g3', OFF).r, d = Math.max(...['S_m', 'P_gp'].map(s => Math.max(...col(off, s).map(v => Math.abs(v - 1)))));
+  check('2-3 교란 끄면 S_m = P_gp = 1', d < 1e-9, `최대 |값 − 1| ${e(d)}`);
+  const { r } = stage('g3'), p = col(r, 'P_gp'), k = p.indexOf(Math.min(...p));
+  check('2-3 장염 중 P-gp 감소 (참고)', Math.min(...p) < 1, `P_gp 최저 ${Math.min(...p).toFixed(3)} @ ${r.T[k].toFixed(0)} h, 720 h에 ${p.at(-1).toFixed(4)}`);
+}
+// 2-4: 질량 보존, 교란을 끄면 2-5(배수 1)와 같음, 교란 전·중·후 비교
+{
+  const { m, C, r, cmp } = stage('g4');
+  const fs = C.expr(m.cmps[0].sim), fr = C.expr(m.cmps[0].ref);
+  let mb = 0; r.T.forEach((t, k) => { if (k + 1 < r.T.length && r.T[k + 1] === t) return; mb = Math.max(mb, Math.abs(fs(t, r.Y[k], r.P) - fr(t, r.Y[k], r.P))); });
+  check('2-4 질량 보존', mb < 6e-4 && cmp[0].met.maxR < 0.1, `28회 투약, 최대 |총량 − 누적 투여| ${e(mb)} mg (기준 0.0006 mg)`);
+  const a = Gut.metrics(stage('g4', OFF).r), b5 = stage('g5', { N_d: 28 }, { tEnd: 672 }).r, b = Gut.metrics(b5);
+  const dd = Math.max(...['Cmax', 'Cmin', 'AUC'].map(k => Math.abs(a[k] / b[k] - 1)));
+  check('2-4 교란 끄면 2-5(배수 1)와 같음', dd < 1e-4, `마지막 간격 Cmax·Cmin·AUCτ 최대 상대차 ${e(dd)}`);
+  E.setM(m); const ex = E.computeExps(C, r.P, { T: r.T, Y: r.Y }, []);
+  const [pre, dur, last, Ft, Fa] = ex;
+  check('2-4 교란 전·중·후 (참고)', isFinite(dur.auc), `AUCτ 전 ${pre.auc.toFixed(3)} → 장염 중 ${dur.auc.toFixed(3)} (${(dur.auc / pre.auc).toFixed(3)}배) → 마지막 ${last.auc.toFixed(3)} (${(last.auc / pre.auc).toFixed(4)}배), 장염 중 F(t) 최대 ${Ft.mx.toFixed(4)}, 장염 뒤 F(t) 최대 ${Fa.mx.toFixed(4)} (기준 0.6)`);
 }
 
 const bad = results.filter(r => !r.ok).length;
