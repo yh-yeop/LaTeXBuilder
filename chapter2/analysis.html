@@ -549,7 +549,7 @@ function renderEq(){
 function loadMathJax(){
   window.MathJax={startup:{typeset:false},svg:{fontCache:'none'}};
   const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.min.js'; s.async=true;
-  s.onload=()=>{ Promise.resolve(window.MathJax&&window.MathJax.startup&&window.MathJax.startup.promise).then(()=>{ mathReady=true; document.querySelectorAll('[data-tex]').forEach(el=>setMath(el,el.dataset.tex)); }).catch(()=>{}); };
+  s.onload=()=>{ Promise.resolve(window.MathJax&&window.MathJax.startup&&window.MathJax.startup.promise).then(()=>{ try{ document.head.appendChild(window.MathJax.svgStylesheet()); }catch(e){} mathReady=true; document.querySelectorAll('[data-tex]').forEach(el=>setMath(el,el.dataset.tex)); }).catch(()=>{}); };
   document.head.appendChild(s);
 }
 

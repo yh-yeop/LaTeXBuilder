@@ -156,6 +156,22 @@ const OFF = { en_on: 0, ab_on: 0, fip_on: 0 };
   check('2-4 교란 전·중·후 (참고)', isFinite(dur.auc), `AUCτ 전 ${pre.auc.toFixed(3)} → 장염 중 ${dur.auc.toFixed(3)} (${(dur.auc / pre.auc).toFixed(3)}배) → 마지막 ${last.auc.toFixed(3)} (${(last.auc / pre.auc).toFixed(4)}배), 장염 중 F(t) 최대 ${Ft.mx.toFixed(4)}, 장염 뒤 F(t) 최대 ${Fa.mx.toFixed(4)} (기준 0.6)`);
 }
 
+// 단계 카드의 "지금 결과 읽기" (발표용 해석 문장)가 기본값에서 오류 없이 만들어지는지
+{
+  const lines = {}; let ok = true;
+  for (const key of Object.keys(C2.presets)) {
+    const { m, C, r } = stage(key); E.setM(m);
+    const exps = E.computeExps(C, r.P, { T: r.T, Y: r.Y }, []);
+    const ctx = { T: r.T, Y: r.Y, P: r.P, idx: r.idx, exps, cmp: [], fmt: E.fmt, windowStats: E.windowStats, interp1: E.interp1,
+      col: s => r.Y.map(y => y[r.idx[s]]), series: txt => { const f = C.expr(txt); return r.T.map((t, k) => f(t, r.Y[k], r.P)); } };
+    try { lines[key] = C2.info[key].interpret(ctx); } catch (err) { lines[key] = ['오류: ' + err.message]; ok = false; }
+    if (!Array.isArray(lines[key]) || !lines[key].length || lines[key].some(x => typeof x !== 'string' || /NaN|undefined/.test(x))) ok = false;
+    if (!C2.info[key].why || !(C2.info[key].guide || []).length) ok = false;
+  }
+  check('단계별 의도·해석 가이드·결과 읽기', ok, Object.keys(lines).length + '개 단계');
+  if (process.argv.includes('--show')) for (const [k, ls] of Object.entries(lines)) { console.log('  [' + k + ']'); ls.forEach(x => console.log('   - ' + x)); }
+}
+
 const bad = results.filter(r => !r.ok).length;
 console.log(bad ? `\n챕터 2 검증 실패: ${bad}/${results.length}` : `\n챕터 2 검증 통과: ${results.length}개 항목`);
 process.exit(bad ? 1 : 0);
