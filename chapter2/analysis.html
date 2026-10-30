@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>챕터 2 · 2-5 분석</title>
+<style>
+:root{
+  color-scheme:light;
+  --bg:#ecf2f0; --surface:#ffffff; --surface2:#f1f6f4; --border:#d3dfdb; --text:#14211e; --muted:#5d6f6a;
+  --accent:#0f7d6b; --accent-soft:#dff2ed; --accent-text:#ffffff;
+  --warn:#9a5b00; --warn-soft:#fff3d9; --ok:#17794f; --ok-soft:#e3f6ec; --danger:#c92a2a; --danger-soft:#fdeaea;
+  --lit:#3a45d6; --lit-soft:#e6e8fb;
+  --grid:#e4ebe8; --axis:#c3cfca; --shade:rgba(15,125,107,.07); --shadow:0 1px 2px rgba(20,32,43,.06);
+  --s0:#52514e; --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
+  --div-neg:#2a78d6; --div-mid:#f0efec; --div-pos:#e34948;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#0c1312; --surface:#141c1b; --surface2:#1b2523; --border:#283633; --text:#e4ece9; --muted:#8fa49e;
+    --accent:#4fd1b0; --accent-soft:#16332c; --accent-text:#0c1312;
+    --warn:#ffc266; --warn-soft:#3a2d14; --ok:#56d3a0; --ok-soft:#173328; --danger:#ff8a80; --danger-soft:#3a1f20;
+    --lit:#8e98ff; --lit-soft:#232a4d;
+    --grid:#222e2c; --axis:#34433f; --shade:rgba(79,209,176,.08); --shadow:none;
+    --s0:#c3c2b7; --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+    --div-neg:#3987e5; --div-mid:#383835; --div-pos:#e66767;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0c1312; --surface:#141c1b; --surface2:#1b2523; --border:#283633; --text:#e4ece9; --muted:#8fa49e;
+  --accent:#4fd1b0; --accent-soft:#16332c; --accent-text:#0c1312;
+  --warn:#ffc266; --warn-soft:#3a2d14; --ok:#56d3a0; --ok-soft:#173328; --danger:#ff8a80; --danger-soft:#3a1f20;
+  --lit:#8e98ff; --lit-soft:#232a4d;
+  --grid:#222e2c; --axis:#34433f; --shade:rgba(79,209,176,.08); --shadow:none;
+  --s0:#c3c2b7; --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
+  --div-neg:#3987e5; --div-mid:#383835; --div-pos:#e66767;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.app{max-width:1480px;margin:0 auto;padding:14px}
+a{color:var(--accent)}
+.top{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:12px}
+.brand{display:flex;gap:12px;align-items:center}
+.chap{background:var(--accent);color:var(--accent-text);font-weight:750;font-size:12px;border-radius:8px;padding:6px 10px;letter-spacing:.02em;white-space:nowrap}
+.brand h1{font-size:19px;margin:0;font-weight:700}
+.brand p{margin:2px 0 0;color:var(--muted);font-size:12.5px}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.btn{font:inherit;font-size:13px;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:7px;padding:6px 11px;cursor:pointer;line-height:1.3;text-decoration:none;display:inline-block}
+.btn:hover{background:var(--surface2)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-text)}
+.btn.sm{padding:4px 9px;font-size:12.5px}
+.btn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-text);font-weight:650}
+.btn:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+select,input[type=number]{font:inherit;color:var(--text);background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:5px 8px}
+input[type=range]{accent-color:var(--accent);width:100%;margin:0}
+.notice{border-radius:12px;padding:11px 14px;margin-bottom:12px;font-size:13px;line-height:1.6}
+.notice.sep{background:var(--accent-soft);border:1px solid var(--border)}
+.notice.caution{background:var(--warn-soft);color:var(--warn)}
+.notice b{font-weight:700}
+.grid{display:grid;gap:14px;grid-template-columns:minmax(0,1fr)}
+@media(min-width:1060px){ .grid{grid-template-columns:minmax(330px,0.78fr) minmax(0,1.6fr);align-items:start}
+  .side{position:sticky;top:12px;max-height:calc(100vh - 24px);overflow:auto;padding-right:2px} }
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:var(--shadow);margin-bottom:14px}
+.card-h{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+h2{font-size:14.5px;margin:0;font-weight:700}
+h3{font-size:13px;margin:12px 0 6px}
+.hint{color:var(--muted);font-size:12.5px;margin:0 0 10px}
+.muted{color:var(--muted)}
+.tag{font-size:11px;font-weight:650;border-radius:999px;padding:1px 8px;white-space:nowrap;display:inline-block}
+.tag-lit{background:var(--lit-soft);color:var(--lit)}
+.tag-cal{background:var(--ok-soft);color:var(--ok)}
+.tag-asm{background:var(--warn-soft);color:var(--warn)}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:12.8px;margin:8px 0 0}
+.kv dt{color:var(--muted)} .kv dd{margin:0;font-variant-numeric:tabular-nums}
+.slider{border-top:1px dashed var(--border);padding:10px 0 4px}
+.slider:first-of-type{border-top:0}
+.slider .lab{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.slider .lab b{font-size:13.5px}
+.slider .val{font-variant-numeric:tabular-nums;font-weight:700;min-width:58px;text-align:right}
+.slider .ev{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;font-size:12px;color:var(--muted);align-items:center}
+.ticks{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:1px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:10px}
+.tile{background:var(--surface2);border-radius:9px;padding:8px 10px}
+.tile .k{font-size:12px;color:var(--muted)}
+.tile .v{font-size:19px;font-weight:700;line-height:1.25}
+.tile .r{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.plotwrap{position:relative}
+canvas.chart{width:100%;height:320px;display:block;touch-action:pan-y;cursor:crosshair}
+canvas.hm{width:100%;max-width:560px;aspect-ratio:1/1;display:block;cursor:crosshair}
+@media(max-width:600px){canvas.chart{height:250px}}
+.legend{display:flex;gap:10px;flex-wrap:wrap;margin:2px 0 8px;font-size:12.5px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:16px;height:0;border-top:2px solid;display:inline-block}
+.legend i.dash{border-top-style:dashed}
+.tip{position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:6px 9px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.12);white-space:nowrap;z-index:5;font-variant-numeric:tabular-nums}
+.tip .sw{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
+table.m{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+table.m th,table.m td{padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap}
+table.m th:first-child,table.m td:first-child{text-align:left}
+table.m th{color:var(--muted);font-weight:600}
+.scroll-x{overflow-x:auto}
+.up{color:var(--div-pos)} .dn{color:var(--div-neg)}
+:root .up,:root .dn{font-weight:650}
+.status{font-size:12.5px;color:var(--muted);min-height:18px}
+.verdict{margin-top:6px;font-size:12.8px;border-radius:8px;padding:7px 10px}
+.verdict.pass{background:var(--ok-soft);color:var(--ok)}
+.verdict.fail{background:var(--warn-soft);color:var(--warn)}
+.eqview{padding:12px 8px 12px 14px;border-left:3px solid var(--accent);background:var(--surface2);border-radius:0 8px 8px 0;overflow-x:auto;font-size:112%}
+.eqview mjx-container{margin:.2em 0!important}
+.rawtex{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:var(--muted);white-space:pre-wrap;word-break:break-all}
+.hmwrap{display:grid;gap:12px;grid-template-columns:minmax(0,560px) minmax(160px,1fr);align-items:start}
+@media(max-width:760px){.hmwrap{grid-template-columns:minmax(0,1fr)}}
+.cbar{height:12px;border-radius:6px;margin:6px 0 2px}
+.cbar-t{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+.overlay{position:fixed;inset:0;background:rgba(10,15,25,.55);display:grid;place-items:center;z-index:50;padding:16px}
+.dlg{background:var(--surface);border:1px solid var(--border);border-radius:12px;width:min(780px,100%);max-height:88vh;display:flex;flex-direction:column;padding:14px;gap:10px}
+.dlg textarea{flex:1;min-height:320px;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;white-space:pre;color:var(--text);background:var(--surface2);border:1px solid var(--border);border-radius:7px;padding:8px}
+.dlg .row{justify-content:flex-end}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <span class="chap">챕터 2 · 2-5</span>
+      <div>
+        <h1>분석 · 수송체 배수와 생체이용률 F</h1>
+        <p>장내 미생물 변화가 장 수송체(P-gp 중심)를 거쳐 F를 바꾸는 경우를 증가·감소 두 방향으로 봅니다</p>
+      </div>
+    </div>
+    <div class="row">
+      <a class="btn" href="index.html">← 챕터 2 단계 화면 (2-1~2-5)</a>
+      <a class="btn" href="../index.html">챕터 1 · PBPK 기본 모델</a>
+      <button class="btn" id="btnPy">Python 코드 (SciPy)</button>
+    </div>
+  </header>
+
+  <div class="notice sep"><b>챕터 2의 2-5 분석 화면입니다.</b> 미생물(2-1~2-4)을 빼고 장 수송체 속도 배수를 직접 바꿔 F와 농도의 변화 방향을 봅니다. 몸(혈액·장기·복수) 식과 값은 챕터 1의 3단계 모델 1을 그대로 쓰고, 장관만 내강·장 세포·대변 3구획으로 바꿨습니다. 여기서 바꾸는 값은 챕터 1에 영향을 주지 않습니다.</div>
+  <div class="notice caution" id="noCat"></div>
+
+  <main class="grid">
+    <section class="side">
+      <div class="card">
+        <div class="card-h"><h2>기준값 (baseline)</h2><span class="tag tag-asm">가정 + 보정</span></div>
+        <p class="hint">기준 F와 분배 프리셋을 정하면 네 속도에 공통 배수 λ를 곱해 Cook 2022 경구 25 mg/kg 1회 Cmax 35 µM(10.20 mg/L)에 맞춥니다. F는 속도 비율로만 정해져 λ와 무관합니다.</p>
+        <h3>기준 F <span class="tag tag-asm">가정</span></h3>
+        <div class="row"><input type="range" id="fb" min="0.2" max="0.95" step="0.05"><b id="fbVal" style="min-width:42px;text-align:right"></b></div>
+        <p class="hint" style="margin-top:4px">모델 1 몸(FIP 청소율)에서는 Cook AUC를 F ≤ 1로 맞출 수 없어 기준 F를 데이터로 정할 수 없습니다.</p>
+        <h3>기준 분배 프리셋 <span class="tag tag-asm">가정</span></h3>
+        <div class="seg" id="parts"></div>
+        <p class="hint" id="partDesc" style="margin-top:6px"></p>
+        <dl class="kv" id="calKv"></dl>
+        <div class="verdict fail" id="tmaxWarn" hidden></div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h2>배수 슬라이더 (기준 대비)</h2><button class="btn sm" id="btnResetM">모두 1배로</button></div>
+        <p class="hint">모든 변화는 절대값이 아니라 기준 대비 배수입니다 (0.25~4배, 로그 눈금).</p>
+        <div id="sliders"></div>
+        <div class="tiles" id="tiles"></div>
+        <p class="hint" style="margin:8px 0 0" id="winNote"></p>
+      </div>
+    </section>
+
+    <section>
+      <div class="card">
+        <div class="card-h"><h2>현재 배수 vs 기준</h2>
+          <div class="row"><label class="muted" style="font-size:12.5px"><input type="checkbox" id="logLive"> y축 로그</label>
+            <button class="btn sm" data-png="cvLive">이미지(PNG)</button><button class="btn sm" id="csvLive">데이터(CSV)</button></div></div>
+        <div class="legend" id="lgLive"></div>
+        <div class="plotwrap"><canvas class="chart" id="cvLive" aria-label="현재 배수와 기준의 혈중 농도 곡선"></canvas><div class="tip" hidden></div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h2>시나리오 겹쳐 그리기</h2>
+          <div class="row"><label class="muted" style="font-size:12.5px">변화 크기
+            <select id="scale"><option value="1.5">1.5배</option><option value="2">2배</option><option value="3">3배</option></select></label>
+            <label class="muted" style="font-size:12.5px"><input type="checkbox" id="logScen"> y축 로그</label>
+            <button class="btn sm" data-png="cvScen">이미지(PNG)</button><button class="btn sm" id="csvScen">데이터(CSV)</button></div></div>
+        <p class="hint">입구↑ = k_in × 크기, 출구↑ = k_out × 크기, 출구↓ = k_out ÷ 크기, 통과↑(설사) = k_tr × 크기. 지금 고른 분배 프리셋 기준입니다.</p>
+        <div class="legend" id="lgScen"></div>
+        <div class="plotwrap"><canvas class="chart" id="cvScen" aria-label="시나리오별 혈중 농도 곡선"></canvas><div class="tip" hidden></div></div>
+        <div class="status" id="scenStatus"></div>
+        <h3>기준 대비 비율</h3>
+        <div class="scroll-x" id="ratioTbl"></div>
+        <h3>분배 프리셋 3개에서 결론이 유지되는지</h3>
+        <p class="hint">같은 시나리오를 세 프리셋으로 각각 다시 보정해 돌린 결과입니다. 방향(↑/↓)이 셋 다 같으면 ‘유지’입니다.</p>
+        <div class="scroll-x" id="presetTbl"></div>
+        <div class="status" id="presetStatus"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h2>2차원 히트맵 · 입구 × 출구</h2>
+          <div class="row"><select id="hmMode"><option value="F">색: F 비율 (= AUC0–∞ 비율)</option><option value="AUC">색: AUCτ 비율 (시뮬레이션 7×7)</option><option value="Cmax">색: Cmax 비율 (시뮬레이션 7×7)</option></select>
+            <button class="btn sm" data-png="cvHm">이미지(PNG)</button><button class="btn sm" id="csvHm">데이터(CSV)</button></div></div>
+        <div class="hmwrap">
+          <div class="plotwrap"><canvas class="hm" id="cvHm" aria-label="입구 배수와 출구 배수에 따른 비율 히트맵"></canvas><div class="tip" hidden></div></div>
+          <div>
+            <div style="font-size:12.5px;font-weight:650" id="hmTitle"></div>
+            <div class="cbar" id="cbar"></div><div class="cbar-t" id="cbarT"></div>
+            <p class="hint" style="margin-top:10px" id="hmNote"></p>
+            <div class="status" id="hmStatus"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h2>모델 식</h2><span class="muted" style="font-size:12px">장관 부분과 혈액 식만 표시 · 나머지 장기 식은 챕터 1 3단계와 같음</span></div>
+        <div class="eqview" id="eqView"></div>
+        <h3>F 닫힌 식</h3>
+        <div class="eqview" id="eqF"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><h2>검증 (이 화면에서 바로 확인)</h2><button class="btn sm" id="btnVerify">다시 확인</button></div>
+        <div id="verify"></div>
+        <p class="hint" style="margin-top:8px">전체 검증은 저장소에서 <code>node tests/chapter2.mjs</code>(해석해·F·질량 보존), <code>node tests/chapter2_scipy.mjs</code>(scipy 대조), <code>node tests/baseline.mjs</code>(챕터 1 회귀)로 돌립니다.</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+    <h2 id="dlgTitle"></h2>
+    <p class="hint" id="dlgHint" style="margin:0"></p>
+    <textarea id="dlgText" spellcheck="false"></textarea>
+    <div class="row"><button class="btn" id="dlgClose">닫기</button><button class="btn primary" id="dlgCopy">복사</button></div>
+  </div>
+</div>
+
+<script src="engine.gen.js"></script>
+<script src="stages.js"></script>
+<script src="model.js"></script>
+<script>
+(function(){
+'use strict';
+const G=window.Gut, E=G.E;
+const $=s=>document.querySelector(s);
+function h(tag,attrs,...kids){
+  const e=document.createElement(tag);
+  if(attrs) for(const k in attrs){ const v=attrs[k]; if(v==null||v===false) continue;
+    if(k==='class') e.className=v; else if(k.slice(0,2)==='on') e.addEventListener(k.slice(2),v); else if(v===true) e.setAttribute(k,''); else e.setAttribute(k,v); }
+  for(const kid of kids.flat(Infinity)){ if(kid==null||kid===false) continue; e.append(kid.nodeType?kid:document.createTextNode(String(kid))); }
+  return e;
+}
+const fmt=E.fmt;
+const TAGCLS={'문헌':'lit','보정':'cal','가정':'asm'};
+const tagEl=t=>h('span',{class:'tag tag-'+(TAGCLS[t]||'asm')},t);
+const tick=()=>new Promise(r=>setTimeout(r,0));
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+/* ---------- 상태 (이 페이지 전용 저장소) ---------- */
+const LS='ch2-gut-scenario-v1';
+const ST={Fb:G.F_BASE_DEFAULT,part:'bal',m:{m_in:1,m_out:1,m_tr:1},scale:2,hmMode:'F',logLive:false,logScen:false};
+try{ const o=JSON.parse(localStorage.getItem(LS)||'null'); if(o&&typeof o==='object'){
+  if(o.Fb>=0.2&&o.Fb<=0.95) ST.Fb=o.Fb; if(G.PARTITIONS.some(p=>p.id===o.part)) ST.part=o.part;
+  if(o.m) for(const k of ['m_in','m_out','m_tr']) if(o.m[k]>=G.MULT_MIN&&o.m[k]<=G.MULT_MAX) ST.m[k]=o.m[k];
+  if([1.5,2,3].includes(+o.scale)) ST.scale=+o.scale; if(['F','AUC','Cmax'].includes(o.hmMode)) ST.hmMode=o.hmMode;
+  ST.logLive=!!o.logLive; ST.logScen=!!o.logScen; } }catch(e){}
+const save=()=>{ try{ localStorage.setItem(LS,JSON.stringify(ST)); }catch(e){} };
+
+/* ---------- 계산 ---------- */
+const calCache=new Map();
+function getCal(Fb,po){ const k=Fb.toFixed(3)+'|'+po; if(!calCache.has(k)) calCache.set(k,G.calibrate(Fb,po)); return calCache.get(k); }
+const partOf=id=>G.PARTITIONS.find(p=>p.id===id);
+// 프리셋 하나의 기준 실행 묶음 (보정, 모델, 기준 시뮬레이션)
+const bundleCache=new Map();
+function getBundle(Fb,id){
+  const key=Fb.toFixed(3)+'|'+id;
+  if(bundleCache.has(key)) return bundleCache.get(key);
+  const cal=getCal(Fb,partOf(id).po), model=G.buildModel(cal.k0), C=G.compileModel(model);
+  const base=G.simulate(model,C,{}), b={cal,model,C,base,met:G.metrics(base)};
+  bundleCache.set(key,b); return b;
+}
+const runWith=(b,m)=>{ const r=G.simulate(b.model,b.C,m); return {r,met:G.metrics(r),F:G.Fclosed(G.applyMult(b.cal.k0,m))}; };
+let B=null;          // 현재 프리셋 묶음
+let jobId=0;         // 비동기 계산 취소용
+
+/* ---------- 그래프: 선 ---------- */
+function niceTicks(lo,hi,n){ const span=hi-lo||1, step0=span/Math.max(1,n), mag=Math.pow(10,Math.floor(Math.log10(step0))), err=step0/mag;
+  const step=(err>=7.5?10:err>=3.5?5:err>=1.5?2:1)*mag, out=[]; for(let v=Math.ceil(lo/step)*step;v<=hi+step*1e-9;v+=step) out.push(+v.toPrecision(12)); return out; }
+function setup(cv){ const dpr=window.devicePixelRatio||1, w=cv.clientWidth, hh=cv.clientHeight; cv.width=Math.round(w*dpr); cv.height=Math.round(hh*dpr);
+  const g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); return {g,w,h:hh}; }
+const charts=new Map();   // canvas id → 마지막 cfg (호버 다시 그리기용)
+function drawLines(cv,cfg){
+  charts.set(cv.id,cfg);
+  const {g,w,h:H}=setup(cv);
+  g.fillStyle=css('--surface'); g.fillRect(0,0,w,H);
+  const L=58,R=14,T=12,Bm=36, pw=w-L-R, ph=H-T-Bm;
+  let xmax=0,ymax=0,ymin=Infinity;
+  cfg.series.forEach(s=>{ xmax=Math.max(xmax,s.T[s.T.length-1]); s.V.forEach(v=>{ if(v>ymax) ymax=v; if(v>0&&v<ymin) ymin=v; }); });
+  if(!(ymax>0)) ymax=1;
+  const logY=!!cfg.logY, ylo=logY?Math.max(ymin,ymax*1e-4):0, yhi=logY?ymax*1.5:ymax*1.08;
+  const X=t=>L+t/xmax*pw, Y=v=>logY?T+ph*(1-(Math.log10(Math.max(v,ylo))-Math.log10(ylo))/(Math.log10(yhi)-Math.log10(ylo))):T+ph*(1-v/yhi);
+  if(cfg.shade){ g.fillStyle=css('--shade'); g.fillRect(X(cfg.shade[0]),T,X(cfg.shade[1])-X(cfg.shade[0]),ph); }
+  g.font='11px system-ui,sans-serif'; g.fillStyle=css('--muted'); g.strokeStyle=css('--grid'); g.lineWidth=1;
+  const yt=logY?(()=>{ const o=[]; for(let e=Math.ceil(Math.log10(ylo));e<=Math.floor(Math.log10(yhi));e++) o.push(Math.pow(10,e)); return o; })():niceTicks(0,yhi,5);
+  g.textAlign='right'; g.textBaseline='middle';
+  yt.forEach(v=>{ const y=Math.round(Y(v))+.5; g.beginPath(); g.moveTo(L,y); g.lineTo(L+pw,y); g.stroke(); g.fillText(fmt(v,3),L-6,y); });
+  const xt=niceTicks(0,xmax,Math.max(3,Math.floor(pw/80)));
+  g.textAlign='center'; g.textBaseline='top';
+  xt.forEach(t=>{ const x=Math.round(X(t))+.5; g.fillText(fmt(t,4),x,T+ph+6); });
+  g.strokeStyle=css('--axis'); g.beginPath(); g.moveTo(L,T+ph+.5); g.lineTo(L+pw,T+ph+.5); g.stroke();
+  g.fillText(cfg.xLabel||'t [h]',L+pw/2,T+ph+20);
+  g.save(); g.translate(13,T+ph/2); g.rotate(-Math.PI/2); g.textBaseline='middle'; g.fillText(cfg.yLabel||'',0,0); g.restore();
+  g.save(); g.beginPath(); g.rect(L,T,pw,ph); g.clip();
+  cfg.series.forEach(s=>{
+    g.strokeStyle=s.color; g.lineWidth=2; g.lineJoin='round'; g.setLineDash(s.dash?[6,4]:[]);
+    g.beginPath(); s.T.forEach((t,k)=>{ const x=X(t),y=Y(s.V[k]); if(k) g.lineTo(x,y); else g.moveTo(x,y); }); g.stroke();
+  });
+  g.restore(); g.setLineDash([]);
+  cfg._layout={L,pw,T,ph,xmax,X,Y};
+  const tip=cv.parentNode.querySelector('.tip');
+  if(cfg.hover!=null&&cfg.hover>=0&&cfg.hover<=xmax){
+    const t=cfg.hover, x=X(t);
+    g.strokeStyle=css('--axis'); g.beginPath(); g.moveTo(x+.5,T); g.lineTo(x+.5,T+ph); g.stroke();
+    const rows=cfg.series.map(s=>{ const v=E.interp1(s.T,s.V,t); g.fillStyle=css('--surface'); g.beginPath(); g.arc(x,Y(v),5,0,7); g.fill(); g.fillStyle=s.color; g.beginPath(); g.arc(x,Y(v),3.5,0,7); g.fill(); return [s,v]; });
+    tip.replaceChildren(h('div',{class:'muted'},'t = '+fmt(t,4)+' h'),...rows.map(([s,v])=>h('div',{},h('span',{class:'sw',style:'background:'+s.color}),s.label+'  '+fmt(v,4)+' mg/L')));
+    tip.hidden=false; const tw=tip.offsetWidth; tip.style.left=Math.min(Math.max(0,x+12),w-tw)+'px'; tip.style.top=(T+6)+'px';
+  }else tip.hidden=true;
+}
+function bindHover(cv){
+  const move=e=>{ const cfg=charts.get(cv.id); if(!cfg||!cfg._layout) return; const r=cv.getBoundingClientRect(), {L,pw,xmax}=cfg._layout, x=e.clientX-r.left;
+    cfg.hover=(x<L||x>L+pw)?null:(x-L)/pw*xmax; drawLines(cv,cfg); };
+  cv.addEventListener('pointermove',move); cv.addEventListener('pointerdown',move);
+  cv.addEventListener('pointerleave',()=>{ const cfg=charts.get(cv.id); if(cfg){ cfg.hover=null; drawLines(cv,cfg); } });
+}
+const legend=(el,series)=>el.replaceChildren(...series.map(s=>h('span',{},h('i',{class:s.dash?'dash':'',style:'border-color:'+s.color}),s.label)));
+const cbOf=r=>r.Y.map(y=>y[r.idx.C_b]);
+
+/* ---------- 그래프: 히트맵 ---------- */
+const HM_LIM=Math.log(4);
+function hexRgb(c){ c=c.replace('#',''); return [0,2,4].map(i=>parseInt(c.slice(i,i+2),16)); }
+function divColor(ratio,lim){
+  const t=Math.max(-1,Math.min(1,Math.log(ratio)/lim)), mid=hexRgb(css('--div-mid')), pole=hexRgb(css(t<0?'--div-neg':'--div-pos')), a=Math.abs(t);
+  return 'rgb('+mid.map((m,i)=>Math.round(m+(pole[i]-m)*a)).join(',')+')';
+}
+let HM=null;   // {mode, xs, ys, vals[j][i], lim, k0, m_tr, gap}
+function drawHeatmap(hover){
+  const cv=$('#cvHm'); if(!HM) return;
+  const {g,w,h:H}=setup(cv);
+  g.fillStyle=css('--surface'); g.fillRect(0,0,w,H);
+  const L=50,R=12,T=10,Bm=42, pw=w-L-R, ph=H-T-Bm, lo=Math.log(G.MULT_MIN), hi=Math.log(G.MULT_MAX);
+  const X=v=>L+(Math.log(v)-lo)/(hi-lo)*pw, Y=v=>T+ph*(1-(Math.log(v)-lo)/(hi-lo));
+  const nx=HM.xs.length, ny=HM.ys.length, cw=pw/nx, chh=ph/ny, gap=HM.gap;
+  for(let j=0;j<ny;j++) for(let i=0;i<nx;i++){ const v=HM.vals[j][i]; if(!(v>0)) continue; g.fillStyle=divColor(v,HM.lim);
+    g.fillRect(L+i*cw+gap/2,T+(ny-1-j)*chh+gap/2,cw-gap+0.6*(gap===0),chh-gap+0.6*(gap===0)); }
+  g.font='11px system-ui,sans-serif'; g.fillStyle=css('--muted'); g.textAlign='center'; g.textBaseline='top';
+  [0.25,0.5,1,2,4].forEach(v=>{ g.fillText(String(v),X(v),T+ph+6); });
+  g.fillText('입구 배수 m_in (k_in, ENT/CNT)',L+pw/2,T+ph+22);
+  g.textAlign='right'; g.textBaseline='middle'; [0.25,0.5,1,2,4].forEach(v=>g.fillText(String(v),L-6,Y(v)));
+  g.save(); g.translate(12,T+ph/2); g.rotate(-Math.PI/2); g.textAlign='center'; g.fillText('출구 배수 m_out (k_out, P-gp/BCRP)',0,0); g.restore();
+  // F 비율 = 1 경계선 (닫힌 식): m_in = m_tr·(pb + po·m_out)
+  g.save(); g.beginPath(); g.rect(L,T,pw,ph); g.clip();
+  g.strokeStyle=css('--text'); g.lineWidth=2; g.setLineDash([7,4]); g.beginPath();
+  for(let s=0;s<=200;s++){ const mo=Math.exp(lo+(hi-lo)*s/200), mi=G.boundaryMin(HM.k0,mo,HM.m_tr); const x=X(mi),y=Y(mo); if(s) g.lineTo(x,y); else g.moveTo(x,y); }
+  g.stroke(); g.setLineDash([]);
+  // 현재 슬라이더 위치
+  const cx=X(ST.m.m_in), cy=Y(ST.m.m_out);
+  g.fillStyle=css('--surface'); g.beginPath(); g.arc(cx,cy,7,0,7); g.fill(); g.strokeStyle=css('--text'); g.lineWidth=2; g.beginPath(); g.arc(cx,cy,5,0,7); g.stroke();
+  g.restore();
+  HM._layout={L,T,pw,ph,lo,hi};
+  const tip=cv.parentNode.querySelector('.tip');
+  if(hover){
+    const i=Math.min(nx-1,Math.max(0,Math.floor((hover.x-L)/cw))), j=Math.min(ny-1,Math.max(0,ny-1-Math.floor((hover.y-T)/chh)));
+    const v=HM.vals[j][i];
+    g.strokeStyle=css('--text'); g.lineWidth=1.5; g.strokeRect(L+i*cw+1,T+(ny-1-j)*chh+1,cw-2,chh-2);
+    tip.replaceChildren(h('div',{},'입구 ×'+fmt(HM.xs[i],3)+' · 출구 ×'+fmt(HM.ys[j],3)),h('div',{},HM.label+' '+(v>0?fmt(v,4):'계산 전')),h('div',{class:'muted'},'누르면 슬라이더를 이 값으로 옮깁니다'));
+    tip.hidden=false; const tw=tip.offsetWidth; tip.style.left=Math.min(Math.max(0,hover.x+12),w-tw)+'px'; tip.style.top=Math.max(0,hover.y-60)+'px';
+  }else tip.hidden=true;
+}
+function renderCbar(){
+  if(!HM) return;
+  const st=[]; for(let k=0;k<=10;k++){ const r=Math.exp(-HM.lim+2*HM.lim*k/10); st.push(divColor(r,HM.lim)+' '+(k*10)+'%'); }
+  $('#cbar').style.background='linear-gradient(90deg,'+st.join(',')+')';
+  const e=Math.exp(HM.lim); $('#cbarT').replaceChildren(h('span',{},fmt(1/e,2)+' (감소)'),h('span',{},'1 (기준과 같음)'),h('span',{},fmt(e,2)+' (증가)'));
+  $('#hmTitle').textContent=HM.label+' · 통과 배수 m_tr = '+fmt(HM.m_tr,3)+' 고정';
+}
+
+/* ---------- 화면: 기준값 ---------- */
+function renderBaseline(){
+  $('#fb').value=ST.Fb; $('#fbVal').textContent=ST.Fb.toFixed(2);
+  $('#parts').replaceChildren(...G.PARTITIONS.map(p=>h('button',{class:'btn sm','aria-pressed':String(p.id===ST.part),onclick:()=>{ if(ST.part===p.id) return; ST.part=p.id; save(); refreshAll(); }},p.label+' (po '+p.po+')')));
+  $('#partDesc').textContent=partOf(ST.part).desc+'. po = k_out/(k_b+k_out), (k_b+k_out)/k_in = 1로 둠.';
+  if(!B) return;
+  const c=B.cal, k=c.k0;
+  $('#calKv').replaceChildren(
+    h('dt',{},'k_in,0 · k_out,0'),h('dd',{},fmt(k.k_in,4)+' · '+fmt(k.k_out,4)+' /h'),
+    h('dt',{},'k_b,0 · k_tr,0'),h('dd',{},fmt(k.k_b,4)+' · '+fmt(k.k_tr,4)+' /h'),
+    h('dt',{},'공통 배수 λ'),h('dd',{},fmt(c.lam,5),' ',tagEl('보정')),
+    h('dt',{},'보정 Cmax'),h('dd',{},c.Cmax.toFixed(4)+' / 목표 '+c.target.toFixed(4)+' mg/L (25 mg/kg 1회)'),
+    h('dt',{},'보정 Tmax'),h('dd',{},fmt(c.Tmax,3)+' h (관측 3~8 h)'),
+    h('dt',{},'기준 F (닫힌 식)'),h('dd',{},fmt(c.F,6)));
+  const tw=$('#tmaxWarn'); tw.hidden=!(c.Tmax<1);
+  tw.textContent='보정된 흡수가 관측보다 매우 빠릅니다 (Tmax '+fmt(c.Tmax,2)+' h). 모델 1 몸(혈액 5% BW, FIP 청소율)에서 F ≤ 1로 Cmax를 맞추려면 이렇게 됩니다. Cmax 비율은 이 가정에 민감하니 F·AUC 비율과 함께 보세요.';
+}
+
+/* ---------- 화면: 슬라이더 + 실시간 ---------- */
+const SL=[
+  {key:'m_in',name:'입구 k_in',sub:'장 내강 → 장 세포 (ENT/CNT)',ev:G.EVIDENCE.k_in},
+  {key:'m_out',name:'출구 k_out',sub:'장 세포 → 장 내강 (P-gp/BCRP)',ev:G.EVIDENCE.k_out},
+  {key:'m_tr',name:'통과 k_tr',sub:'장 내강 → 대변 (설사 시 증가)',ev:G.EVIDENCE.k_tr}
+];
+const lg2=v=>Math.log2(v);
+function renderSliders(){
+  $('#sliders').replaceChildren(...SL.map(s=>{
+    const val=h('span',{class:'val'},'×'+fmt(ST.m[s.key],3));
+    const inp=h('input',{type:'range',min:'-2',max:'2',step:'0.02','aria-label':s.name+' 배수'});
+    inp.value=lg2(ST.m[s.key]);
+    inp.addEventListener('input',()=>{ let v=Math.pow(2,+inp.value); if(Math.abs(+inp.value)<0.03) v=1; ST.m[s.key]=v; val.textContent='×'+fmt(v,3); save(); scheduleLive(); drawHeatmap(); });
+    inp.addEventListener('change',()=>{ if(s.key==='m_tr') startHeatmap(); });
+    const ev=h('div',{class:'ev'},...(s.ev.parts?s.ev.parts.map(([t,x])=>[tagEl(t),h('span',{},x)]):[tagEl(s.ev.tag),h('span',{},s.ev.text)]));
+    return h('div',{class:'slider'},h('div',{class:'lab'},h('div',{},h('b',{},s.name),' ',h('span',{class:'muted',style:'font-size:12px'},s.sub)),val),inp,
+      h('div',{class:'ticks'},h('span',{},'×0.25'),h('span',{},'×0.5'),h('span',{},'×1'),h('span',{},'×2'),h('span',{},'×4')),ev);
+  }));
+}
+let liveTimer=0, LIVE=null;
+function scheduleLive(){ clearTimeout(liveTimer); liveTimer=setTimeout(runLive,60); }
+const ratioSpan=(r,d)=>h('span',{class:Math.abs(r-1)<(d||1e-3)?'':r>1?'up':'dn'},'기준의 '+fmt(r,4)+'배'+(Math.abs(r-1)<(d||1e-3)?'':r>1?' ↑':' ↓'));
+function runLive(){
+  if(!B) return;
+  LIVE=runWith(B,ST.m);
+  const bm=B.met, m=LIVE.met, F0=B.cal.F;
+  const tile=(k,v,u,r)=>h('div',{class:'tile'},h('div',{class:'k'},k),h('div',{class:'v'},v,u?h('span',{class:'muted',style:'font-size:12px;font-weight:500'},' '+u):null),h('div',{class:'r'},r));
+  $('#tiles').replaceChildren(
+    tile('F',fmt(LIVE.F,4),'',ratioSpan(LIVE.F/F0)),
+    tile('Cmax',fmt(m.Cmax,4),'mg/L',ratioSpan(m.Cmax/bm.Cmax)),
+    tile('Cmin',fmt(m.Cmin,4),'mg/L',ratioSpan(m.Cmin/bm.Cmin)),
+    tile('AUCτ',fmt(m.AUC,4),'mg·h/L',ratioSpan(m.AUC/bm.AUC)));
+  const P=B.base.P;
+  $('#winNote').textContent='Cmax·Cmin·AUCτ는 마지막 투약 간격 '+fmt(m.win[0],4)+'–'+fmt(m.win[1],4)+' h (모델 1 기본 일정 '+P.Dose_mgkg+' mg/kg, '+P.tau+' h 간격, '+P.N_d+'회) 기준이고, Cmin은 간격 끝 값입니다. F는 닫힌 식 값입니다. '+G.NO_CAT_DATA;
+  const series=[{label:'기준',color:css('--s0'),dash:true,T:B.base.T,V:cbOf(B.base)},{label:'현재 배수',color:css('--s1'),T:LIVE.r.T,V:cbOf(LIVE.r)}];
+  legend($('#lgLive'),series);
+  drawLines($('#cvLive'),{series,logY:ST.logLive,shade:m.win,yLabel:'C_b [mg/L]'});
+}
+
+/* ---------- 시나리오 겹쳐 그리기 + 프리셋 비교 ---------- */
+let SCN=null, PRE=null;
+const SCOL=['--s0','--s1','--s2','--s3','--s4'];
+async function runScenarios(id){
+  $('#scenStatus').textContent='계산 중…';
+  const out=[];
+  for(const sc of G.SCEN(ST.scale)){ await tick(); if(id!==jobId) return; out.push(Object.assign({sc},sc.id==='base'?{r:B.base,met:B.met,F:B.cal.F}:runWith(B,sc.m))); }
+  SCN=out; $('#scenStatus').textContent=''; renderScenarios();
+}
+function renderScenarios(){
+  if(!SCN) return;
+  const series=SCN.map((x,i)=>({label:x.sc.label,color:css(SCOL[i]),dash:x.sc.id==='base',T:x.r.T,V:cbOf(x.r)}));
+  legend($('#lgScen'),series);
+  drawLines($('#cvScen'),Object.assign(charts.get('cvScen')||{},{series,logY:ST.logScen,shade:SCN[0].met.win,yLabel:'C_b [mg/L]'}));
+  const b=SCN[0];
+  const cell=(v,r,base)=>h('td',{},fmt(v,4),base?null:[' ',h('span',{class:Math.abs(r-1)<1e-3?'muted':r>1?'up':'dn'},'('+fmt(r,4)+(Math.abs(r-1)<1e-3?'':r>1?' ↑':' ↓')+')')]);
+  $('#ratioTbl').replaceChildren(h('table',{class:'m'},
+    h('thead',{},h('tr',{},h('th',{},'시나리오'),h('th',{},'F (비율)'),h('th',{},'Cmax mg/L (비율)'),h('th',{},'Cmin mg/L (비율)'),h('th',{},'AUCτ mg·h/L (비율)'))),
+    h('tbody',{},SCN.map((x,i)=>h('tr',{},h('td',{},h('span',{class:'sw',style:'display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;background:'+css(SCOL[i])}),x.sc.label),
+      cell(x.F,x.F/b.F,i===0),cell(x.met.Cmax,x.met.Cmax/b.met.Cmax,i===0),cell(x.met.Cmin,x.met.Cmin/b.met.Cmin,i===0),cell(x.met.AUC,x.met.AUC/b.met.AUC,i===0))))));
+}
+async function runPresets(id){
+  const rows=G.SCEN(ST.scale).slice(1), res={};
+  let n=0; const tot=G.PARTITIONS.length*(rows.length+1);
+  for(const p of G.PARTITIONS){
+    await tick(); if(id!==jobId) return;
+    $('#presetStatus').textContent='프리셋 비교 계산 중… '+Math.round(100*n/tot)+'%';
+    const b=getBundle(ST.Fb,p.id); n++; res[p.id]={};
+    for(const sc of rows){ await tick(); if(id!==jobId) return; const x=runWith(b,sc.m); n++;
+      res[p.id][sc.id]={F:x.F/b.cal.F,AUC:x.met.AUC/b.met.AUC,Cmax:x.met.Cmax/b.met.Cmax,Cmin:x.met.Cmin/b.met.Cmin};
+      $('#presetStatus').textContent='프리셋 비교 계산 중… '+Math.round(100*n/tot)+'%'; }
+  }
+  PRE={rows,res}; $('#presetStatus').textContent=''; renderPresets();
+}
+function renderPresets(){
+  if(!PRE) return;
+  const dir=r=>Math.abs(r-1)<0.01?0:r>1?1:-1, arrow=d=>d>0?'↑':d<0?'↓':'≈';
+  const metric=['F','AUC','Cmax','Cmin'], mlab={F:'F',AUC:'AUCτ',Cmax:'Cmax',Cmin:'Cmin'};
+  const head=h('tr',{},h('th',{},'시나리오'),h('th',{},'지표'),...G.PARTITIONS.map(p=>h('th',{},p.label)),h('th',{},'결론'));
+  const body=[];
+  PRE.rows.forEach(sc=>metric.forEach((mk,mi)=>{
+    const vals=G.PARTITIONS.map(p=>PRE.res[p.id][sc.id][mk]), ds=vals.map(dir), same=ds.every(d=>d===ds[0]);
+    body.push(h('tr',{},h('td',{},mi===0?sc.label:''),h('td',{class:'muted'},mlab[mk]),
+      ...vals.map((v,i)=>h('td',{},h('span',{class:ds[i]>0?'up':ds[i]<0?'dn':'muted'},fmt(v,4)+' '+arrow(ds[i])))),
+      h('td',{class:same?'':'up'},same?'유지 ('+arrow(ds[0])+')':'프리셋마다 다름')));
+  }));
+  $('#presetTbl').replaceChildren(h('table',{class:'m'},h('thead',{},head),h('tbody',{},body)));
+}
+
+/* ---------- 히트맵 ---------- */
+const HM_FN=41, HM_SN=7;
+const logGrid=n=>Array.from({length:n},(_,i)=>Math.exp(Math.log(G.MULT_MIN)+(Math.log(G.MULT_MAX)-Math.log(G.MULT_MIN))*i/(n-1)));
+const hmCache=new Map();
+async function startHeatmap(){
+  const id=++hmJob, mode=ST.hmMode, k0=B.cal.k0, F0=B.cal.F, m_tr=ST.m.m_tr;
+  const note={F:'선형 모델에서는 AUC0–∞ 비율이 F 비율과 정확히 같습니다. 그래서 이 색은 F 비율이자 AUC0–∞ 비율입니다 (닫힌 식, 41×41).',
+    AUC:'마지막 투약 간격 AUCτ 비율을 7×7 격자에서 시뮬레이션했습니다. 거의 정상상태라 F 비율과 거의 같습니다.',
+    Cmax:'마지막 투약 간격 Cmax 비율을 7×7 격자에서 시뮬레이션했습니다. 보정된 흡수 속도 가정에 민감합니다.'}[mode];
+  $('#hmNote').textContent=note+' 점선은 F 비율 = 1인 경계 (m_in = m_tr·(pb + po·m_out)), 원은 현재 슬라이더 위치입니다. 칸을 누르면 슬라이더가 그 값으로 옮겨집니다.';
+  if(mode==='F'){
+    const xs=logGrid(HM_FN), ys=logGrid(HM_FN);
+    const vals=ys.map(mo=>xs.map(mi=>G.Fclosed(G.applyMult(k0,{m_in:mi,m_out:mo,m_tr}))/F0));
+    HM={mode,xs,ys,vals,lim:hmLim(vals),k0,m_tr,gap:0,label:'F 비율'}; $('#hmStatus').textContent='';
+    renderCbar(); drawHeatmap(); return;
+  }
+  const key=[ST.Fb,ST.part,mode,m_tr.toFixed(4)].join('|'), xs=logGrid(HM_SN), ys=logGrid(HM_SN);
+  const vals=hmCache.get(key)||ys.map(()=>xs.map(()=>NaN));
+  HM={mode,xs,ys,vals,lim:HM_LIM,k0,m_tr,gap:2,label:mode==='AUC'?'AUCτ 비율':'Cmax 비율'}; renderCbar(); drawHeatmap();
+  if(hmCache.has(key)){ HM.lim=hmLim(vals); renderCbar(); drawHeatmap(); $('#hmStatus').textContent=''; return; }
+  // 모델 1 몸은 강성에 가까워(혈액 5% BW) 한 번에 수백 ms가 걸린다. 시나리오 계산이 끝난 뒤 차례로 돈다.
+  $('#hmStatus').textContent='시나리오 계산이 끝나면 시작합니다…';
+  await busy; if(id!==hmJob) return;
+  const base=B.met[mode==='AUC'?'AUC':'Cmax'];
+  for(let j=0;j<HM_SN;j++) for(let i=0;i<HM_SN;i++){
+    await tick(); if(id!==hmJob) return;
+    const x=runWith(B,{m_in:xs[i],m_out:ys[j],m_tr}); vals[j][i]=x.met[mode==='AUC'?'AUC':'Cmax']/base;
+    $('#hmStatus').textContent='시뮬레이션 중… '+(j*HM_SN+i+1)+' / '+(HM_SN*HM_SN); drawHeatmap();
+  }
+  HM.lim=hmLim(vals); renderCbar(); drawHeatmap();
+  hmCache.set(key,vals); $('#hmStatus').textContent='';
+}
+// 색 범위: 데이터의 최대 |log 비율|에 맞춘 대칭 범위 (1.1배 ~ 4배 사이)
+function hmLim(vals){ let m=0; vals.forEach(r=>r.forEach(v=>{ if(v>0) m=Math.max(m,Math.abs(Math.log(v))); })); return Math.min(HM_LIM,Math.max(Math.log(1.1),m)); }
+let hmJob=0, busy=Promise.resolve();
+function bindHeatmap(){
+  const cv=$('#cvHm');
+  const pos=e=>{ const r=cv.getBoundingClientRect(); return {x:e.clientX-r.left,y:e.clientY-r.top}; };
+  const inside=p=>HM&&HM._layout&&p.x>=HM._layout.L&&p.x<=HM._layout.L+HM._layout.pw&&p.y>=HM._layout.T&&p.y<=HM._layout.T+HM._layout.ph;
+  cv.addEventListener('pointermove',e=>{ const p=pos(e); drawHeatmap(inside(p)?p:null); });
+  cv.addEventListener('pointerleave',()=>drawHeatmap(null));
+  cv.addEventListener('click',e=>{ const p=pos(e); if(!inside(p)) return; const {L,T,pw,ph}=HM._layout;
+    const i=Math.min(HM.xs.length-1,Math.floor((p.x-L)/(pw/HM.xs.length))), j=Math.min(HM.ys.length-1,HM.ys.length-1-Math.floor((p.y-T)/(ph/HM.ys.length)));
+    ST.m.m_in=HM.xs[i]; ST.m.m_out=HM.ys[j]; save(); renderSliders(); scheduleLive(); drawHeatmap(p); });
+}
+
+/* ---------- 수식 ---------- */
+let mathReady=false;
+function setMath(el,tex){ el.dataset.tex=tex; if(!mathReady||!window.MathJax||!window.MathJax.tex2svg){ el.textContent=tex; el.classList.add('rawtex'); return; }
+  el.classList.remove('rawtex'); try{ el.replaceChildren(window.MathJax.tex2svg(tex,{display:true})); }catch(e){ el.textContent=tex; el.classList.add('rawtex'); } }
+function renderEq(){
+  if(!B) return;
+  E.setM(B.model);
+  const sub=B.model.eqs.filter(q=>['A_L','A_E','A_fec','A_abs','C_b'].includes(q.state));
+  setMath($('#eqView'),E.buildTex(sub));
+  setMath($('#eqF'),'p_1=\\frac{k_{in}}{k_{in}+k_{tr}},\\quad p_b=\\frac{k_b}{k_b+k_{out}},\\quad p_o=\\frac{k_{out}}{k_b+k_{out}} \\\\[0.6em] F=\\frac{p_1\\,p_b}{1-p_1\\,p_o}=\\frac{k_{in}\\,k_b}{k_{in}\\,k_b+k_{tr}\\,(k_b+k_{out})}');
+}
+function loadMathJax(){
+  window.MathJax={startup:{typeset:false},svg:{fontCache:'none'}};
+  const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.min.js'; s.async=true;
+  s.onload=()=>{ Promise.resolve(window.MathJax&&window.MathJax.startup&&window.MathJax.startup.promise).then(()=>{ mathReady=true; document.querySelectorAll('[data-tex]').forEach(el=>setMath(el,el.dataset.tex)); }).catch(()=>{}); };
+  document.head.appendChild(s);
+}
+
+/* ---------- 화면 안 검증 ---------- */
+function runVerify(){
+  if(!B) return;
+  const k=G.applyMult(B.cal.k0,ST.m), slow=Math.min(...G.gutAnalytic(k,1).lambdas.map(Math.abs));
+  const r=G.simulate(B.model,B.C,Object.assign({N_d:1},ST.m),{tEnd:40/slow,rtol:1e-10});
+  const y=r.Y[r.Y.length-1], D=r.P.BW*r.P.Dose_mgkg, Fn=y[r.idx.A_abs]/D, Fc=G.Fclosed(k);
+  const cur=LIVE?LIVE.r:B.base, C=B.C, fs=C.expr(B.model.cmps[0].sim), fr=C.expr(B.model.cmps[0].ref);
+  let mb=0; cur.T.forEach((t,i)=>{ if(i+1<cur.T.length&&cur.T[i+1]===t) return; mb=Math.max(mb,Math.abs(fs(t,cur.Y[i],cur.P)-fr(t,cur.Y[i],cur.P))); });
+  const row=(ok,txt)=>h('div',{class:'verdict '+(ok?'pass':'fail')},(ok?'✓ ':'✗ ')+txt);
+  $('#verify').replaceChildren(
+    row(Math.abs(Fn-Fc)<1e-8,'F 닫힌 식 '+fmt(Fc,9)+' vs 수치 F(혈액 유입 누적/투여량, 1회 투여 끝까지) '+fmt(Fn,9)+' · 차이 '+fmt(Math.abs(Fn-Fc),2)),
+    row(mb<6e-4,'질량 보존 (현재 배수, 내강+장 세포+대변+몸+소실 vs 누적 투여) 최대 차이 '+fmt(mb,2)+' mg (기준 0.0006 mg)'),
+    row(Math.abs(B.cal.Cmax/G.CMAX_TARGET-1)<1e-6,'기준 보정 Cmax '+fmt(B.cal.Cmax,6)+' / 목표 '+fmt(G.CMAX_TARGET,6)+' mg/L'));
+}
+
+/* ---------- 내보내기 ---------- */
+function download(name,blob){ const a=h('a',{href:URL.createObjectURL(blob),download:name}); document.body.append(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },500); }
+const csvBlob=rows=>new Blob(['﻿'+rows.map(r=>r.join(',')).join('\n')],{type:'text/csv;charset=utf-8'});
+const tag=()=>'F'+ST.Fb.toFixed(2)+'_'+ST.part;
+const head=()=>[['# 챕터 2 장 상태 시나리오 · 모델로 본 경향 (실측 예측 아님) · 고양이 직접 자료 없음'],['# 기준 F',ST.Fb,'분배 프리셋',partOf(ST.part).label,'λ',B.cal.lam]];
+function csvSeries(list){
+  const N=400, tEnd=B.base.T[B.base.T.length-1], rows=[...head(),['t_h',...list.map(x=>x.label+'_C_b_mgL')]];
+  for(let k=0;k<=N;k++){ const t=tEnd*k/N; rows.push([+t.toFixed(6),...list.map(x=>E.interp1(x.r.T,cbOf(x.r),t))]); }
+  return rows;
+}
+function bindExports(){
+  document.querySelectorAll('[data-png]').forEach(b=>b.addEventListener('click',()=>{ const cv=document.getElementById(b.dataset.png); cv.toBlob(bl=>download('ch2_'+b.dataset.png.replace('cv','').toLowerCase()+'_'+tag()+'.png',bl),'image/png'); }));
+  $('#csvLive').addEventListener('click',()=>{ if(!LIVE) return; download('ch2_live_'+tag()+'.csv',csvBlob([...csvSeries([{label:'기준',r:B.base},{label:'현재',r:LIVE.r}]),[],['# 현재 배수','m_in',ST.m.m_in,'m_out',ST.m.m_out,'m_tr',ST.m.m_tr]])); });
+  $('#csvScen').addEventListener('click',()=>{ if(!SCN) return;
+    const rows=csvSeries(SCN.map(x=>({label:x.sc.label,r:x.r})));
+    rows.push([],['시나리오','F','F_비율','Cmax_mgL','Cmax_비율','Cmin_mgL','Cmin_비율','AUCtau','AUCtau_비율']);
+    const b=SCN[0]; SCN.forEach(x=>rows.push([x.sc.label,x.F,x.F/b.F,x.met.Cmax,x.met.Cmax/b.met.Cmax,x.met.Cmin,x.met.Cmin/b.met.Cmin,x.met.AUC,x.met.AUC/b.met.AUC]));
+    if(PRE){ rows.push([],['프리셋 비교 (비율)','지표',...G.PARTITIONS.map(p=>p.label)]); PRE.rows.forEach(sc=>['F','AUC','Cmax','Cmin'].forEach(mk=>rows.push([sc.label,mk,...G.PARTITIONS.map(p=>PRE.res[p.id][sc.id][mk])]))); }
+    download('ch2_scenarios_x'+ST.scale+'_'+tag()+'.csv',csvBlob(rows)); });
+  $('#csvHm').addEventListener('click',()=>{ if(!HM) return; const rows=[...head(),['# '+HM.label+', m_tr',HM.m_tr],['m_out \\ m_in',...HM.xs.map(v=>+v.toPrecision(6))]];
+    HM.ys.forEach((mo,j)=>rows.push([+mo.toPrecision(6),...HM.vals[j]])); download('ch2_heatmap_'+HM.mode+'_'+tag()+'.csv',csvBlob(rows)); });
+  $('#btnPy').addEventListener('click',()=>{ if(!B) return; E.setM(B.model); B.model.vars.forEach(v=>{ if(v.name in ST.m){ v.value=ST.m[v.name]; v.expr=String(v.value); } });
+    $('#dlgTitle').textContent='Python 코드 (SciPy) · 현재 배수'; $('#dlgHint').textContent='검증용입니다. numpy · scipy · matplotlib이 있으면 그대로 실행됩니다.';
+    $('#dlgText').value=E.genPython(); B.model.vars.forEach(v=>{ if(v.name in ST.m){ v.value=1; v.expr='1'; } }); $('#overlay').hidden=false; });
+  $('#dlgClose').addEventListener('click',()=>{ $('#overlay').hidden=true; });
+  $('#overlay').addEventListener('mousedown',e=>{ if(e.target.id==='overlay') $('#overlay').hidden=true; });
+  $('#dlgCopy').addEventListener('click',async()=>{ try{ await navigator.clipboard.writeText($('#dlgText').value); }catch(e){ $('#dlgText').select(); document.execCommand('copy'); } });
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape') $('#overlay').hidden=true; });
+}
+
+/* ---------- 묶어서 다시 계산 ---------- */
+async function refreshAll(){
+  const id=++jobId; hmJob++;
+  SCN=null; PRE=null;
+  $('#scenStatus').textContent='기준값 보정 중…'; $('#presetTbl').replaceChildren(); $('#ratioTbl').replaceChildren();
+  renderBaseline(); await tick(); if(id!==jobId) return;
+  B=getBundle(ST.Fb,ST.part);
+  renderBaseline(); renderEq(); runLive(); runVerify();
+  busy=runScenarioJobs(id); startHeatmap();
+  await busy;
+}
+async function runScenarioJobs(id){ await runScenarios(id); if(id===jobId) await runPresets(id); }
+
+function init(){
+  $('#noCat').textContent=G.NO_CAT_DATA+' 근거 수준: P-gp 변화만 문헌 확인(마우스·사람, 대장), ENT/CNT·BCRP 변화와 통과 속도는 가정 시나리오입니다. 시나리오 파라미터는 실측에 맞추지 않았습니다.';
+  $('#scale').value=String(ST.scale); $('#hmMode').value=ST.hmMode; $('#logLive').checked=ST.logLive; $('#logScen').checked=ST.logScen;
+  let fbT=0;
+  $('#fb').addEventListener('input',e=>{ ST.Fb=+e.target.value; $('#fbVal').textContent=ST.Fb.toFixed(2); save(); clearTimeout(fbT); fbT=setTimeout(refreshAll,250); });
+  $('#btnResetM').addEventListener('click',()=>{ ST.m={m_in:1,m_out:1,m_tr:1}; save(); renderSliders(); runLive(); startHeatmap(); });
+  $('#scale').addEventListener('change',e=>{ ST.scale=+e.target.value; save(); const id=++jobId; SCN=null; PRE=null; $('#presetTbl').replaceChildren(); busy=runScenarioJobs(id); });
+  $('#hmMode').addEventListener('change',e=>{ ST.hmMode=e.target.value; save(); startHeatmap(); });
+  $('#logLive').addEventListener('change',e=>{ ST.logLive=e.target.checked; save(); runLive(); });
+  $('#logScen').addEventListener('change',e=>{ ST.logScen=e.target.checked; save(); renderScenarios(); });
+  $('#btnVerify').addEventListener('click',runVerify);
+  bindHover($('#cvLive')); bindHover($('#cvScen')); bindHeatmap(); bindExports();
+  const redraw=()=>{ const a=charts.get('cvLive'); if(a) drawLines($('#cvLive'),a); const b=charts.get('cvScen'); if(b) drawLines($('#cvScen'),b); renderCbar(); drawHeatmap(); };
+  if(window.ResizeObserver){ const ro=new ResizeObserver(redraw); ['#cvLive','#cvScen','#cvHm'].forEach(s=>ro.observe($(s))); } else window.addEventListener('resize',redraw);
+  if(window.matchMedia) try{ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{ redraw(); renderScenarios(); }); }catch(e){}
+  renderSliders(); loadMathJax(); refreshAll();
+}
+init();
+})();
+</script>
+</body>
+</html>

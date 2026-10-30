@@ -30,15 +30,26 @@ npm test        # Node 22+, 의존성 없음
 ```
 푸시할 때마다 GitHub Actions가 같은 테스트를 돌립니다. 앞으로 할 일은 [ROADMAP.md](ROADMAP.md)에 있습니다.
 
-## 챕터 2 · 장 상태 시나리오 (`chapter2/`)
-챕터 1(모델 0 ~ 6단계)과 별개의 탐구 모델입니다. 몸 식은 챕터 1의 3단계 모델 1을 그대로 쓰고, 장관만 내강 → 장 세포 → 혈액(입구 k_in, 출구 k_out, 혈액 유입 k_b, 대변 통과 k_tr) 3구획으로 바꿨습니다. F는 입력이 아니라 결과값입니다.
-- `chapter2/engine.gen.js`는 `index.html`의 계산 코드를 자동 추출한 파일입니다. 직접 고치지 말고 `index.html`을 고친 뒤 `node tools/build-engine.mjs`로 다시 만드세요.
+## 챕터 2 · 장내 미생물 → PBPK (`chapter2/`)
+챕터 1과 같은 편집기에서 단계를 따라갑니다. 로트카–볼테라로 장내 미생물을 먼저 보고, 대사산물·P-gp 발현을 거쳐 PBPK에 연결합니다.
+
+| 단계 | 내용 |
+|---|---|
+| 2-1 | 로트카–볼테라 2군 경쟁 (공생균 x_c vs 기회균 x_o), 로지스틱 해석해 검증, 평형점 |
+| 2-2 | 교란과 회복: 장염 · 항생제 · FIP (각각 켜고 끔) |
+| 2-3 | 대사산물 S_m → P-gp 발현 P_gp (간접 반응, 기준 1) |
+| 2-4 | P_gp → 출구 k_out, 장염 설사 → 통과 k_tr. 장 3구획(내강 → 장 세포 → 혈액) + 챕터 1 모델 1 몸, 28일 투약 |
+| 2-5 | k_in·k_out·k_tr 배수 민감도와 분석 화면(`analysis.html`: 시나리오 겹쳐 그리기 · 분배 프리셋 비교 · 히트맵) |
+
+- F는 입력이 아니라 결과값입니다. 고양이 장내 미생물·수송체 자료는 없어 미생물·교란·P-gp 값은 모두 가정이며, P-gp 변화의 방향만 문헌 확인(마우스·사람, 대장)입니다.
+- `chapter2/index.html`(편집기)과 `chapter2/engine.gen.js`(분석 화면용 계산 코드)는 `index.html`에서 자동 생성한 파일입니다. 직접 고치지 말고 `index.html`이나 `chapter2/stages.js`를 고친 뒤 `node tools/build-engine.mjs`로 다시 만드세요.
+- 단계 내용은 `chapter2/stages.js`(STAGE_PACK)에 있습니다. `index.html`은 STAGE_PACK이 있으면 진행 단계·설명·저장 키를 그것으로 바꾸고, 없으면 챕터 1 그대로 동작합니다.
 - 페이지가 스크립트 파일을 불러오므로 로컬에서는 정적 서버로 여세요 (예: `python -m http.server`).
-- 적분기는 명시적(Dormand–Prince)으로 고정했습니다. 챕터 1 기본값(자동)은 이 모델에서 Rodas3로 바뀌어 약 2.7배 느리고, 결과 차이는 1e-5 수준입니다.
+- 2-4·2-5의 적분기는 명시적(Dormand–Prince)으로 고정했습니다. 자동은 이 모델에서 Rodas3로 바뀌어 약 2.7배 느리고, 결과 차이는 1e-5 수준입니다.
 
 ## 검증
 - `node tests/baseline.mjs` — 챕터 1 모든 단계의 지표가 `tests/baseline.json` 기록과 같은지 (회귀)
-- `node tests/chapter2.mjs` — 챕터 2 해석해·F 닫힌 식·질량 보존·보정·엔진 추출본 최신 여부
+- `node tests/chapter2.mjs` — 챕터 2 단계별 검사(해석해·평형점·교란 끔·질량 보존)와 장 모델(F 닫힌 식·보정), 생성 파일 최신 여부
 - `node tests/chapter2_scipy.mjs` — 챕터 2 모델을 scipy로 풀어 대조 (numpy, scipy 필요)
 
 ## 주의

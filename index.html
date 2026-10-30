@@ -243,7 +243,7 @@ details.bulk textarea{width:100%;margin-top:6px;min-height:58px;resize:vertical}
       <button class="btn" id="btnShare">링크 복사</button>
       <button class="btn" id="btnCode">코드 내보내기</button>
       <button class="btn warn" id="btnReset">처음 식으로 초기화</button>
-      <a class="btn" href="chapter2/" style="text-decoration:none">챕터 2 · 장 상태 시나리오 →</a>
+      <a class="btn" id="chapLink" href="chapter2/" style="text-decoration:none">챕터 2 · 장내 미생물 → PBPK →</a>
     </div>
   </header>
   <div class="welcome" id="welcome" hidden>
@@ -330,6 +330,8 @@ details.bulk textarea{width:100%;margin-top:6px;min-height:58px;resize:vertical}
 <script>
 (function(){
 'use strict';
+// 다른 챕터 페이지(chapter2/index.html)가 단계 묶음(STAGE_PACK)을 넘기면 진행 단계·설명·저장 키를 그것으로 바꾼다. 없으면 챕터 1 그대로.
+const PACK=globalThis.STAGE_PACK||null;
 
 /* @core-start: 유틸·수식 파서·LaTeX 출력 */
 /* ================= 유틸 ================= */
@@ -616,7 +618,7 @@ function toTex(n,min,ctx){
 
 /* @core-end */
 /* ================= 모델 ================= */
-const LS_KEY='ode-equation-builder-v1';
+const LS_KEY=PACK?PACK.keys.model:'ode-equation-builder-v1';
 function mkVar(name,value,unit){
   value=num(value);
   return {name,latex:autoLatex(name),kind:'param',value,min:value>=0?0:value*4,max:value===0?1:Math.abs(value)*4,unit:unit||'',log:false,expr:String(value),tag:'',note:''};
@@ -827,8 +829,8 @@ const HELP_HTML=`
 <li><b>계산이 느립니다</b>: 6단계처럼 기간이 긴 모델은 시간이 걸립니다. 종료 시간을 줄이거나 스윕 곡선 수를 줄이세요. “스텝 수가 너무 많아” 경고가 나면 적분기를 ‘강성’으로 바꿔 보세요.</li>
 <li><b>단위 경고가 틀린 것 같습니다</b>: 변수 카드의 단위 칸을 확인하세요. 단위를 비우면 그 변수가 든 항은 검사하지 않습니다.</li>
 </ul>`;
-let M=defaultModel();
-try{ const raw=localStorage.getItem(LS_KEY); if(raw) M=normalize(JSON.parse(raw)); }catch(e){}
+let M=defaultModel(), hadStored=false;
+try{ const raw=localStorage.getItem(LS_KEY); if(raw){ M=normalize(JSON.parse(raw)); hadStored=true; } }catch(e){}
 const S={collapsed:new Set(),helpOpen:new Set(),varQ:'',varF:'',result:null,hidden:new Set(),hover:null,layout:null,f:null,P:null,compile:null,warnings:[],cmp:[],exps:[],eventTimes:[],sweepJob:0,sweepPending:false};
 let saveTimer=0;
 function save(){ clearTimeout(saveTimer); saveTimer=setTimeout(()=>{ try{ localStorage.setItem(LS_KEY,JSON.stringify(M)); }catch(e){} },300); }
@@ -1903,15 +1905,16 @@ function attachHelp(card,key){
   btn.addEventListener('click',()=>{ const now=panel.hidden; panel.hidden=!now; btn.setAttribute('aria-expanded',String(now)); if(now) S.helpOpen.add(key); else S.helpOpen.delete(key); });
   h2.append(btn); head.after(panel);
 }
-function openHelp(){ const b=$('#helpBody'); if(!b.dataset.ready){ b.innerHTML=HELP_HTML; b.dataset.ready='1'; } $('#helpOverlay').hidden=false; $('#helpClose').focus(); }
+function openHelp(){ const b=$('#helpBody'); if(!b.dataset.ready){ b.innerHTML=PACK&&PACK.flowHtml?HELP_HTML.replace(/<h3>1~6단계 흐름<\/h3>[\s\S]*?<\/table><\/div>/,PACK.flowHtml):HELP_HTML; b.dataset.ready='1'; } $('#helpOverlay').hidden=false; $('#helpClose').focus(); }
 function closeHelp(){ $('#helpOverlay').hidden=true; }
 function loadPreset(v){
-  const PRESETS={m0:defaultModel,s1:presetStage1,s2:presetStage2,m1:presetModel1,iv:presetIV2c,ck:presetCook,c1:presetCase1};
+  const PRESETS=PACK_PRESETS||{m0:defaultModel,s1:presetStage1,s2:presetStage2,m1:presetModel1,iv:presetIV2c,ck:presetCook,c1:presetCase1};
   if(!PRESETS[v]) return;
   M=PRESETS[v](); if(v!=='m0') applyMeta(M,v);
   S.hidden.clear(); S.collapsed.clear(); S.varQ=''; S.varF='';
-  if(v!=='m0') M.eqs.forEach(q=>{ if(q.state!=='C_b') S.hidden.add(q.state); });
-  if(M.eqs.length>4) M.eqs.forEach(q=>{ if(q.state!=='C_b') S.collapsed.add(q.state); });
+  const vis=(M.info&&M.info.show)||['C_b'];   // 처음에 보이는 곡선 (챕터 1은 C_b)
+  if(v!=='m0') M.eqs.forEach(q=>{ if(!vis.includes(q.state)) S.hidden.add(q.state); });
+  if(M.eqs.length>4) M.eqs.forEach(q=>{ if(!vis.includes(q.state)) S.collapsed.add(q.state); });
   $('#optCdot').checked=!!M.opts.cdot; $('#optBreak').checked=!!M.opts.breakTerms; $('#optLog').checked=!!M.opts.logY;
   renderAll();
   toast((M.info?M.info.title:'모델')+'을(를) 불러왔습니다');
@@ -1937,6 +1940,7 @@ function renderInfo(){
     const pass=x.auc>=220&&x.above[0]>=23&&x.above[1]>=9;
     el.append(h('div',{class:'verdict '+(pass?'pass':'fail')},x.label+' · Cooke 목표 대비: AUC '+fmt(x.auc,3)+' / 220 µM·h, 3 µM 초과 '+fmt(x.above[0],3)+' / 23 h, 10 µM 초과 '+fmt(x.above[1],3)+' / 9 h'));
   });
+  if(I.link) el.append(h('div',{class:'row',style:'margin-top:12px'},h('a',{class:'btn sm',href:I.link.href,style:'text-decoration:none'},I.link.label)));
   if(I.next){ const nx=STAGES.find(z=>z[0]===I.next); el.append(h('div',{class:'row',style:'margin-top:12px'},h('button',{class:'btn sm primary',onclick:()=>loadPreset(I.next)},'다음 단계 불러오기 ('+nx[1]+')'))); }
 }
 const TAGCLS={'문헌':'lit','보정':'cal','계산':'calc','가정':'asm','예시':'ex'};
@@ -2395,7 +2399,7 @@ async function shareLink(){
 }
 
 /* ---- 내 프리셋 (localStorage) ---- */
-const UP_KEY='ode-builder-presets-v1';
+const UP_KEY=PACK?PACK.keys.presets:'ode-builder-presets-v1';
 function loadUserPresets(){ try{ const a=JSON.parse(localStorage.getItem(UP_KEY)||'[]'); return Array.isArray(a)?a.filter(x=>x&&typeof x==='object'&&typeof x.name==='string'&&x.model):[]; }catch(e){ return []; } }
 function saveUserPresets(list){ try{ localStorage.setItem(UP_KEY,JSON.stringify(list)); return true; }catch(e){ toast('브라우저 저장 공간이 부족해 프리셋을 저장하지 못했습니다'); return false; } }
 function fillUserPresetSel(){
@@ -2880,10 +2884,28 @@ function presetStage1(){
   });
 }
 
+/* ================= 단계 묶음 (다른 챕터) ================= */
+// 단계 함수는 이 파일의 모델 도우미를 받아 만든다. 챕터 1에서는 PACK이 없어 아무 일도 하지 않는다.
+let PACK_PRESETS=null, PACK_OPTIONS=[];
+if(PACK){
+  const B=PACK.build({PV,FV,T_,ORG,DOSE_VARS,DOSE_FUNCS,normalize,setV,presets:{m1:presetModel1}});
+  PACK_PRESETS=B.presets; PACK_OPTIONS=B.options;
+  STAGES.splice(0,STAGES.length,...B.stages);
+  Object.keys(INFO).forEach(k=>{ delete INFO[k]; }); Object.assign(INFO,B.info);
+  Object.keys(B.presets).forEach(k=>{ ANN_P[k]=Object.assign({},B.ann||{},(B.annStage||{})[k]||{}); });
+}
+
 /* ================= 초기화 & 이벤트 ================= */
 function renderAll(){ renderEqs(); renderDoses(); renderVars(); renderCmp(); renderExps(); renderSim(); renderEqView(); renderInfo(); run(); }
 
 function bind(){
+  if(PACK){
+    document.title=PACK.title;
+    const br=$('.brand'); br.querySelector('h1').textContent=PACK.brand[0]; br.querySelector('p').textContent=PACK.brand[1];
+    $('#presetSel').replaceChildren(h('option',{value:''},'단계 불러오기…'),...PACK_OPTIONS.map(([k,lab])=>h('option',{value:k},lab)));
+    const cl=$('#chapLink'); cl.href=PACK.link.href; cl.textContent=PACK.link.label;
+    $('#wStart').textContent=PACK.startLabel;
+  }
   $('#optCdot').checked=!!M.opts.cdot; $('#optBreak').checked=!!M.opts.breakTerms; $('#optLog').checked=!!M.opts.logY;
   $('#optCdot').addEventListener('change',e=>{ M.opts.cdot=e.target.checked; renderEqView(); rerenderTermsLater(); save(); });
   $('#optBreak').addEventListener('change',e=>{ M.opts.breakTerms=e.target.checked; renderEqView(); save(); });
@@ -2910,18 +2932,19 @@ function bind(){
     const b=e.currentTarget;
     if(!resetArm){ resetArm=setTimeout(()=>{ resetArm=0; b.textContent='처음 식으로 초기화'; },3000); b.textContent='한 번 더 누르면 초기화'; return; }
     clearTimeout(resetArm); resetArm=0; b.textContent='처음 식으로 초기화';
+    if(PACK){ loadPreset(PACK.start); return; }
     M=defaultModel(); S.hidden.clear(); renderAll(); toast('처음 식으로 되돌렸습니다');
   });
   $('#btnHelp').addEventListener('click',openHelp);
   $('#helpClose').addEventListener('click',closeHelp);
   $('#helpOverlay').addEventListener('mousedown',e=>{ if(e.target.id==='helpOverlay') closeHelp(); });
-  const WKEY='ode-builder-welcome-v1';
+  const WKEY=PACK?PACK.keys.welcome:'ode-builder-welcome-v1';
   let seen=false; try{ seen=!!localStorage.getItem(WKEY); }catch(e){}
   const hideW=()=>{ $('#welcome').hidden=true; try{ localStorage.setItem(WKEY,'1'); }catch(e){} };
   $('#welcome').hidden=seen;
   $('#wClose').addEventListener('click',hideW);
   $('#wHelp').addEventListener('click',()=>{ hideW(); openHelp(); });
-  $('#wStart').addEventListener('click',()=>{ hideW(); loadPreset('s1'); });
+  $('#wStart').addEventListener('click',()=>{ hideW(); loadPreset(PACK?PACK.start:'s1'); });
   attachHelp($('#eqView').closest('.card'),'tex');
   attachHelp($('#plot').closest('.card'),'plot');
   attachHelp($('#metrics').closest('.card'),'metrics');
@@ -2958,7 +2981,8 @@ const hashToast=r=>{ if(r>0) toast('공유 링크의 모델을 불러왔습니�
   const fromHash=await applyHashModel();  // 저장된 모델보다 링크가 우선
   bind();
   loadMathJax();
-  renderAll();
+  if(PACK&&!hadStored&&fromHash===0) loadPreset(PACK.start);  // 다른 챕터를 처음 열면 첫 단계부터
+  else renderAll();
   hashToast(fromHash);
   window.addEventListener('hashchange',async()=>{
     const r=await applyHashModel(); if(r<=0){ hashToast(r); return; }

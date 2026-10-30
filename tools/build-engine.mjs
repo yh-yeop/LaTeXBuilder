@@ -31,14 +31,28 @@ export function buildEngine() {
   const body = src.slice(0, at).replace(/^\(function\(\)\{/, 'globalThis.PBPK=(function(){') + `return ${EXPORTS};\n})();`;
   return '// 자동 생성 파일입니다. 직접 고치지 마세요.\n// 원본: index.html의 <script> (챕터 1). 다시 만들기: node tools/build-engine.mjs\n' + body + '\n';
 }
-export const isFresh = () => existsSync(OUT) && lf(readFileSync(OUT, 'utf8')) === buildEngine();
+// 챕터 2 편집기 페이지: index.html을 그대로 쓰되 단계 묶음(stages.js)과 색(theme.css)만 끼운다.
+// 진행 단계·설명·저장 키 등은 index.html이 STAGE_PACK을 읽어 바꾼다.
+export const PAGE = path.join(root, 'chapter2', 'index.html');
+export function buildChapter2Page() {
+  const html = lf(readFileSync(path.join(root, 'index.html'), 'utf8'));
+  const MAIN = '<script>\n(function(){';
+  if (html.split(MAIN).length !== 2 || !html.includes('</head>') || !html.startsWith('<!DOCTYPE html>\n'))
+    throw new Error('index.html 형태가 예상과 다릅니다. tools/build-engine.mjs를 갱신하세요');
+  return html
+    .replace('<!DOCTYPE html>\n', '<!DOCTYPE html>\n<!-- 자동 생성 파일입니다. 직접 고치지 마세요. 원본: index.html + chapter2/stages.js. 다시 만들기: node tools/build-engine.mjs -->\n')
+    .replace('</head>', '<link rel="stylesheet" href="theme.css">\n</head>')
+    .replace(MAIN, '<script src="stages.js"></script>\n' + MAIN);
+}
+
+const TARGETS = [[OUT, buildEngine], [PAGE, buildChapter2Page]];
+export const isFresh = () => TARGETS.every(([f, b]) => existsSync(f) && lf(readFileSync(f, 'utf8')) === b());
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv.includes('--check')) {
-    const ok = isFresh();
-    console.log(ok ? 'engine.gen.js 최신 상태' : 'engine.gen.js가 index.html과 다릅니다. node tools/build-engine.mjs를 실행하세요');
-    process.exit(ok ? 0 : 1);
+    const stale = TARGETS.filter(([f, b]) => !(existsSync(f) && lf(readFileSync(f, 'utf8')) === b())).map(([f]) => path.basename(f));
+    console.log(stale.length ? `chapter2/${stale.join(', chapter2/')}가 index.html과 다릅니다. node tools/build-engine.mjs를 실행하세요` : 'engine.gen.js · index.html(챕터 2) 최신 상태');
+    process.exit(stale.length ? 1 : 0);
   }
-  writeFileSync(OUT, buildEngine());
-  console.log('생성: ' + OUT);
+  for (const [f, b] of TARGETS) { writeFileSync(f, b()); console.log('생성: ' + f); }
 }
