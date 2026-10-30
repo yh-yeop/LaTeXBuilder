@@ -115,6 +115,9 @@ function buildModel(k0){
   m.info=null;
   m.opts.breakTerms=false;   // 수식 표시만 바뀜 (계산과 무관)
   m.sim.rtol=1e-7;
+  // 적분기는 명시적(Dormand–Prince)으로 고정. 챕터 1 기본값 'auto'는 이 모델에서 Rodas3로 바뀌어 약 2.7배 느리고
+  // (시나리오·히트맵은 수십 번 돌린다) 결과 차이는 1e-5 수준이다.
+  m.sim.method='explicit';
   return m;
 }
 
@@ -128,8 +131,8 @@ function simulate(m,C,over,opt){
   const t0=m.sim.t0, t1=opt.tEnd??m.sim.tEnd, rtol=opt.rtol??m.sim.rtol;
   const y0=m.eqs.map(q=>E.num(q.ic));
   const ev=E.makeEvents(C,P,m.eqs.length,t0,t1).ev;
-  const r=E.integrateEvents(C,P,y0,t0,t1,rtol,ev);
-  return {T:r.T,Y:r.Y,P,warn:r.warn,idx:Object.fromEntries(m.eqs.map((q,i)=>[q.state,i]))};
+  const r=E.integrateEvents(C,P,y0,t0,t1,rtol,ev,opt.method??m.sim.method);   // 적분기 선택은 챕터 1 run()과 같게 (기본 'auto')
+  return {T:r.T,Y:r.Y,P,warn:r.warn,stiff:!!r.stiff,idx:Object.fromEntries(m.eqs.map((q,i)=>[q.state,i]))};
 }
 // 마지막 투약 간격 [(N−1)τ, Nτ]의 Cmax, Cmin(Nτ 직전 값), AUCτ. 농도는 C_b (mg/L)
 function metrics(r){
