@@ -1,0 +1,1792 @@
+// 자동 생성 파일입니다. 직접 고치지 마세요.
+// 원본: index.html의 <script> (챕터 1). 다시 만들기: node tools/build-engine.mjs
+globalThis.PBPK=(function(){
+'use strict';
+
+/* ================= 유틸 ================= */
+const $=(s,r)=>(r||document).querySelector(s);
+function h(tag,attrs,...kids){
+  const e=document.createElement(tag);
+  if(attrs) for(const k in attrs){
+    const v=attrs[k];
+    if(v==null||v===false) continue;
+    if(k==='class') e.className=v;
+    else if(k==='value') e.value=v;
+    else if(k==='checked') e.checked=!!v;
+    else if(k.slice(0,2)==='on') e.addEventListener(k.slice(2),v);
+    else if(v===true) e.setAttribute(k,'');
+    else e.setAttribute(k,v);
+  }
+  for(const kid of kids.flat(Infinity)){
+    if(kid==null||kid===false) continue;
+    e.append(kid.nodeType?kid:document.createTextNode(String(kid)));
+  }
+  return e;
+}
+const num=x=>Number.isFinite(+x)?+x:0;
+function fmt(v,p){
+  p=p||4;
+  if(!isFinite(v)) return String(v);
+  if(v===0) return '0';
+  const a=Math.abs(v);
+  if(a>=1e5||a<1e-3) return v.toExponential(p-1).replace(/\.?0+e/,'e').replace('e+','e');
+  return String(parseFloat(v.toPrecision(p)));
+}
+let toastTimer=0;
+function toast(msg){
+  const el=$('#toast'); el.textContent=msg; el.classList.add('show');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>el.classList.remove('show'),2600);
+}
+async function copyText(txt){
+  try{ await navigator.clipboard.writeText(txt); toast('복사했습니다'); return; }catch(e){}
+  try{
+    const ta=h('textarea',{style:'position:fixed;left:-999px;top:0'}); ta.value=txt;
+    document.body.append(ta); ta.select(); const ok=document.execCommand('copy'); ta.remove();
+    toast(ok?'복사했습니다':'복사하지 못했습니다. 직접 선택해서 복사해 주세요');
+  }catch(e){ toast('복사하지 못했습니다. 직접 선택해서 복사해 주세요'); }
+}
+
+/* ================= 수식 파서 ================= */
+const FUNCS={exp:1,ln:1,log10:1,sqrt:1,abs:1,sin:1,cos:1,tan:1,tanh:1,step:1,floor:1,ceil:1,min:2,max:2,mod:3};
+const RESERVED=new Set(['t','pi']);
+function tokenize(s){
+  const toks=[]; let i=0;
+  while(i<s.length){
+    const c=s[i];
+    if(/\s/.test(c)){i++;continue;}
+    const rest=s.slice(i); let m;
+    if((m=/^(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?/.exec(rest))){toks.push({k:'num',v:parseFloat(m[0])});i+=m[0].length;continue;}
+    if((m=/^[A-Za-z_][A-Za-z0-9_]*/.exec(rest))){toks.push({k:'id',v:m[0]});i+=m[0].length;continue;}
+    if(c==='*'&&s[i+1]==='*'){toks.push({k:'op',v:'^'});i+=2;continue;}
+    if('+-*/^(),'.indexOf(c)>=0){toks.push({k:'op',v:c});i++;continue;}
+    if(c==='×'||c==='·'){toks.push({k:'op',v:'*'});i++;continue;}
+    if(c==='−'){toks.push({k:'op',v:'-'});i++;continue;}
+    throw new Error('사용할 수 없는 문자: "'+c+'"');
+  }
+  return toks;
+}
+function parse(src){
+  const toks=tokenize(String(src));
+  if(!toks.length) throw new Error('식이 비어 있습니다');
+  let p=0;
+  const peek=()=>toks[p];
+  const isOp=v=>toks[p]&&toks[p].k==='op'&&toks[p].v===v;
+  function expr(){
+    let a=term();
+    while(isOp('+')||isOp('-')){ const op=toks[p++].v; const b=term(); a={t:'bin',op,a,b}; }
+    return a;
+  }
+  function term(){
+    let a=unary();
+    for(;;){
+      if(isOp('*')||isOp('/')){ const op=toks[p++].v; const b=unary(); a={t:'bin',op,a,b}; }
+      else if(a.t==='num'&&peek()&&(peek().k==='id'||isOp('('))){ const b=unary(); a={t:'bin',op:'*',a,b}; }
+      else break;
+    }
+    return a;
+  }
+  function unary(){
+    if(isOp('-')){ p++; return {t:'neg',a:unary()}; }
+    if(isOp('+')){ p++; return unary(); }
+    return power();
+  }
+  function power(){
+    const a=primary();
+    if(isOp('^')){ p++; const b=unary(); return {t:'bin',op:'^',a,b}; }
+    return a;
+  }
+  function primary(){
+    const t=toks[p++];
+    if(!t) throw new Error('식이 중간에 끝났습니다');
+    if(t.k==='num') return {t:'num',v:t.v};
+    if(t.k==='id'){
+      if(isOp('(')){
+        p++; const args=[];
+        if(!isOp(')')){ args.push(expr()); while(isOp(',')){ p++; args.push(expr()); } }
+        if(!isOp(')')) throw new Error('닫는 괄호 ")"가 필요합니다');
+        p++;
+        if(!(t.v in FUNCS)) throw new Error('지원하지 않는 함수: '+t.v);
+        { const ar=FUNCS[t.v]; if(ar===2?args.length<2:ar===3?args.length!==2:args.length!==1) throw new Error(t.v+'()의 인수 개수가 맞지 않습니다'); }
+        return {t:'fn',n:t.v,args};
+      }
+      return {t:'var',n:t.v};
+    }
+    if(t.v==='('){
+      const e=expr();
+      if(!isOp(')')) throw new Error('닫는 괄호 ")"가 필요합니다');
+      p++; return e;
+    }
+    throw new Error('예상하지 못한 기호: "'+t.v+'"');
+  }
+  const e=expr();
+  if(p<toks.length) throw new Error('해석할 수 없는 부분: "'+toks[p].v+'" (곱셈은 * 로 써 주세요)');
+  return e;
+}
+function mapVars(n,fn){
+  switch(n.t){
+    case 'var': return fn(n);
+    case 'neg': return {t:'neg',a:mapVars(n.a,fn)};
+    case 'bin': return {t:'bin',op:n.op,a:mapVars(n.a,fn),b:mapVars(n.b,fn)};
+    case 'fn': return {t:'fn',n:n.n,args:n.args.map(a=>mapVars(a,fn))};
+    default: return n;
+  }
+}
+function collectVars(n,set){
+  set=set||new Set();
+  switch(n.t){
+    case 'var': set.add(n.n); break;
+    case 'neg': collectVars(n.a,set); break;
+    case 'bin': collectVars(n.a,set); collectVars(n.b,set); break;
+    case 'fn': n.args.forEach(a=>collectVars(a,set)); break;
+  }
+  return set;
+}
+function flatten(n,sign,out){
+  if(n.t==='bin'&&n.op==='+'){ flatten(n.a,sign,out); flatten(n.b,sign,out); }
+  else if(n.t==='bin'&&n.op==='-'){ flatten(n.a,sign,out); flatten(n.b,-sign,out); }
+  else if(n.t==='neg'){ flatten(n.a,-sign,out); }
+  else out.push({sign,ast:n});
+  return out;
+}
+
+/* ---- 텍스트 출력 (입력창 / Python 공용) ---- */
+function prec(n){
+  if(n.t==='bin'){ if(n.op==='+'||n.op==='-') return 1; if(n.op==='*'||n.op==='/') return 3; return 5; }
+  if(n.t==='neg') return 2;
+  return 6;
+}
+const numText=v=>String(v);
+const TO={pow:'^',v:n=>n,fn:(name,args)=>name+'('+args.join(', ')+')'};
+function toText(n,min,o){
+  min=min||0; o=o||TO;
+  let s;
+  switch(n.t){
+    case 'num': s=numText(n.v); break;
+    case 'var': s=o.v(n.n); break;
+    case 'neg': s='-'+toText(n.a,3,o); break;
+    case 'fn': s=o.fn(n.n,n.args.map(a=>toText(a,0,o))); break;
+    default: {
+      const a=n.a,b=n.b;
+      if(n.op==='+') s=toText(a,1,o)+' + '+toText(b,1,o);
+      else if(n.op==='-') s=toText(a,1,o)+' - '+toText(b,2,o);
+      else if(n.op==='*') s=toText(a,3,o)+'*'+toText(b,4,o);
+      else if(n.op==='/') s=toText(a,3,o)+'/'+toText(b,4,o);
+      else s=toText(a,6,o)+o.pow+toText(b,5,o);
+    }
+  }
+  return prec(n)<min?'('+s+')':s;
+}
+
+/* ---- LaTeX 출력 ---- */
+const GREEK=new Set(['alpha','beta','gamma','delta','epsilon','zeta','eta','theta','iota','kappa','lambda','mu','nu','xi','rho','sigma','tau','phi','chi','psi','omega','Gamma','Delta','Theta','Lambda','Xi','Pi','Sigma','Phi','Psi','Omega']);
+function atomTex(s,isSub){
+  if(GREEK.has(s)) return '\\'+s;
+  if(/^\d+$/.test(s)||s.length===1) return s;
+  return isSub?'\\mathrm{'+s+'}':'\\mathit{'+s+'}';
+}
+function autoLatex(name){
+  const parts=name.split('_'); const base=parts[0]; const subs=parts.slice(1).filter(Boolean);
+  let m;
+  if(!subs.length&&!GREEK.has(base)&&(m=/^([A-Za-z]+)(\d+)$/.exec(base))) return atomTex(m[1],false)+'_{'+m[2]+'}';
+  const b=atomTex(base,false);
+  return subs.length?b+'_{'+subs.map(x=>atomTex(x,true)).join(',')+'}':b;
+}
+function texNum(v){
+  if(Number.isInteger(v)&&Math.abs(v)<1e6) return String(v);
+  const a=Math.abs(v);
+  if(a>=1e-3&&a<1e6) return String(parseFloat(v.toPrecision(4)));
+  let [m,e]=v.toExponential(3).split('e');
+  m=m.replace(/\.?0+$/,''); e=parseInt(e,10);
+  return m+'\\times 10^{'+e+'}';
+}
+function texPrec(n){
+  if(n.t==='bin'){ switch(n.op){case '+':case '-':return 1;case '*':return 3;case '/':return 6;default:return 5;} }
+  if(n.t==='neg') return 2;
+  if(n.t==='fn'&&n.n==='exp') return 5;
+  return 6;
+}
+function startsWithNum(n){ return n.t==='num'||(n.t==='bin'&&n.op==='*'&&startsWithNum(n.a)); }
+function fnTex(n,ctx){
+  const A=n.args.map(a=>toTex(a,0,ctx)); const a0=A[0];
+  switch(n.n){
+    case 'exp': return 'e^{'+a0+'}';
+    case 'ln': return '\\ln\\left('+a0+'\\right)';
+    case 'log10': return '\\log_{10}\\left('+a0+'\\right)';
+    case 'sqrt': return '\\sqrt{'+a0+'}';
+    case 'abs': return '\\left|'+a0+'\\right|';
+    case 'sin': case 'cos': case 'tan': case 'tanh': return '\\'+n.n+'\\left('+a0+'\\right)';
+    case 'min': case 'max': return '\\'+n.n+'\\left('+A.join(',\\,')+'\\right)';
+    case 'step': return 'H\\left('+a0+'\\right)';
+    case 'floor': return '\\left\\lfloor '+a0+'\\right\\rfloor';
+    case 'ceil': return '\\left\\lceil '+a0+'\\right\\rceil';
+    case 'mod': return '\\left('+A[0]+' \\bmod '+A[1]+'\\right)';
+  }
+  return a0;
+}
+function toTex(n,min,ctx){
+  min=min||0; let s;
+  switch(n.t){
+    case 'num': s=texNum(n.v); break;
+    case 'var': s=ctx.label(n.n); break;
+    case 'neg': s='-'+toTex(n.a,3,ctx); break;
+    case 'fn': s=fnTex(n,ctx); break;
+    default: {
+      const a=n.a,b=n.b;
+      if(n.op==='+'){
+        s=b.t==='neg'?toTex(a,1,ctx)+' - '+toTex(b.a,2,ctx):toTex(a,1,ctx)+' + '+toTex(b,1,ctx);
+      }else if(n.op==='-') s=toTex(a,1,ctx)+' - '+toTex(b,2,ctx);
+      else if(n.op==='*'){
+        const sep=(ctx.cdot||startsWithNum(b))?' \\cdot ':' \\, ';
+        s=toTex(a,3,ctx)+sep+toTex(b,3,ctx);
+      }else if(n.op==='/') s='\\frac{'+toTex(a,0,ctx)+'}{'+toTex(b,0,ctx)+'}';
+      else{
+        const base=(a.t==='bin'&&a.op==='/')?'\\left('+toTex(a,0,ctx)+'\\right)':toTex(a,6,ctx);
+        s=base+'^{'+toTex(b,0,ctx)+'}';
+      }
+    }
+  }
+  return texPrec(n)<min?'\\left('+s+'\\right)':s;
+}
+
+/* ================= 모델 ================= */
+const LS_KEY='ode-equation-builder-v1';
+function mkVar(name,value,unit){
+  value=num(value);
+  return {name,latex:autoLatex(name),kind:'param',value,min:value>=0?0:value*4,max:value===0?1:Math.abs(value)*4,unit:unit||'',log:false,expr:String(value),tag:'',note:''};
+}
+function defaultModel(){
+  return applyMeta({
+    vars:[
+      {name:'V_h',latex:'V_h',kind:'param',value:1.5,min:0.1,max:6,unit:'L',log:false,expr:'1.5'},
+      {name:'Q_h',latex:'Q_h',kind:'param',value:90,min:0,max:360,unit:'L/h',log:false,expr:'90'},
+      {name:'C_b',latex:'C_b',kind:'param',value:10,min:0,max:40,unit:'mg/L',log:false,expr:'10'},
+      {name:'Kp_h',latex:'K_{p,h}',kind:'param',value:5,min:0.5,max:20,unit:'-',log:false,expr:'5'},
+      {name:'CL_int',latex:'CL_{int}',kind:'param',value:30,min:0,max:300,unit:'L/h',log:false,expr:'30'}
+    ],
+    eqs:[{
+      state:'C_h',latex:'C_h',cap:'V_h',ic:0,unit:'mg/L',
+      terms:[
+        {sign:1,on:true,expr:'Q_h*(C_b - C_h/Kp_h)'},
+        {sign:-1,on:true,expr:'CL_int*(C_h/Kp_h)'}
+      ]
+    }],
+    doses:[],cmps:[],exps:[],
+    sim:{t0:0,tEnd:0.5,tunit:'h',rtol:1e-7},
+    sweep:{on:false,name:'CL_int',from:5,to:300,n:6,log:false,show:'C_h'},
+    opts:{cdot:true,breakTerms:false,logY:false}
+  },'m0');
+}
+function normalize(o){
+  const d=defaultModel();
+  if(!o||typeof o!=='object') return d;
+  const fin=(x,dv)=>Number.isFinite(+x)&&x!==null&&x!==''?+x:dv;
+  const vars=Array.isArray(o.vars)?o.vars.filter(v=>v&&typeof v.name==='string'&&v.name).map(v=>({
+    name:v.name,latex:String(v.latex||autoLatex(v.name)),kind:v.kind==='func'?'func':'param',
+    value:fin(v.value,1),min:fin(v.min,0),max:fin(v.max,4),unit:String(v.unit||''),log:!!v.log,expr:String(v.expr||'0'),tag:String(v.tag||''),note:String(v.note||'')
+  })):d.vars;
+  const eqs=Array.isArray(o.eqs)&&o.eqs.length?o.eqs.map((q,i)=>({
+    state:String(q.state||('y'+(i+1))),latex:String(q.latex||''),cap:String(q.cap||'1'),ic:fin(q.ic,0),unit:String(q.unit||''),
+    terms:(Array.isArray(q.terms)?q.terms:[]).map(tm=>({sign:tm.sign<0?-1:1,on:tm.on!==false,expr:String(tm.expr||'0')}))
+  })):d.eqs;
+  const doses=(Array.isArray(o.doses)?o.doses:[]).filter(x=>x&&typeof x==='object').map(x=>({
+    on:x.on!==false,label:String(x.label||''),target:String(x.target||eqs[0].state),
+    amt:String(x.amt||'0'),start:String(x.start==null?'0':x.start),tau:String(x.tau==null?'24':x.tau),n:String(x.n==null?'1':x.n)}));
+  const cmps=(Array.isArray(o.cmps)?o.cmps:[]).filter(x=>x&&typeof x==='object').map(x=>({
+    on:x.on!==false,strict:!!x.strict,label:String(x.label||''),sim:String(x.sim||''),kind:x.kind==='data'?'data':'ref',ref:String(x.ref||''),data:String(x.data||'')}));
+  const exps=(Array.isArray(o.exps)?o.exps:[]).filter(x=>x&&typeof x==='object').map(x=>({
+    on:x.on!==false,label:String(x.label||''),expr:String(x.expr||''),scale:String(x.scale==null?'1':x.scale),
+    t0:String(x.t0==null?'0':x.t0),t1:String(x.t1==null?'24':x.t1),thr:String(x.thr||'')}));
+  return {vars,eqs,doses,cmps,exps,info:(o.info&&typeof o.info==='object')?Object.assign({},o.info):null,sim:Object.assign({},d.sim,o.sim||{}),sweep:Object.assign({},d.sweep,o.sweep||{}),opts:Object.assign({},d.opts,o.opts||{})};
+}
+/* ================= 단계 정보 · 값의 근거 · 도움말 ================= */
+const LIT_V='고양이 PBK 논문 Table 2 (체중 대비 %)', LIT_Q='고양이 PBK 논문 Table 2 (심박출량 대비 %), 합 100%로 정규화해 사용', ASM_KP='고양이 장기별 값 없음. Vss 약 2.4~2.6 L/kg에 맞춘 공통 가정값';
+const ANN={
+  BW:['문헌','Coggins 2025 FIP 고양이 평균 체중 3.53 kg 근처 (보충 Table 2)'],
+  Dose_mgkg:['문헌','Cooke 2026 경구 TDM 코호트의 평균 1회 용량 약 12 mg/kg'],
+  F:['보정','Cook 2022 경구 25 mg/kg(건강 고양이)에 맞춘 값'],
+  ka:['보정','Cook 2022 경구 데이터에 맞춘 값. 최고 농도 시간은 관측보다 빠름'],
+  tau:['문헌','하루 1회(QD). 증례 논문과 FIP 치료 기준'],
+  N_d:['가정','시뮬레이션할 투여 횟수'],
+  CL_kg:['계산','Coggins 2025 Table 3 청소율 ÷ 체중, GS-441524 환산(×0.483)'],
+  Vc_kg:['계산','Coggins 2025 V1 ÷ 체중, GS-441524 환산'],
+  CO_kg:['문헌','개·고양이 120~200 mL/kg/min의 중간값 (Veterinary Key). 고양이만 잰 값은 아님'],
+  Vpct_b:['문헌',LIT_V],
+  CLh_kg:['계산','총 청소율 0.4 L/h/kg가 되도록 well-stirred 식으로 역산. 간·신장 분담 비율은 가정'],
+  CLr_kg:['계산','총 청소율 0.4 L/h/kg가 되도록 well-stirred 식으로 역산. 간·신장 분담 비율은 가정'],
+  PS_kg:['가정','복수 교환 속도. 근거 없음, 스윕으로 확인'],
+  Vasc_kg:['가정','복수 부피 가정값'],
+  Kp_a:['가정','복수/혈장 비. 근거 약함 (3마리 4점, 피크 0.55~0.6, 트로프 1 이상)'],
+  Dose_IV:['계산','remdesivir 15 mg/kg × 0.483(분자량 비) × 0.95(전환율)'],
+  Qh_kg:['계산','간 혈류 4.3%를 합 100%로 정규화 × 심박출량 9.6 L/h/kg'],
+  CLi_kg:['계산','간의 유효 청소율이 0.4 L/h/kg가 되도록 well-stirred 식으로 역산']
+};
+['h','k','lu','he','mu','re'].forEach(k=>{ ANN['Vpct_'+k]=['문헌',LIT_V]; ANN['Qpct_'+k]=['문헌',LIT_Q]; ANN['Kp_'+k]=['가정',ASM_KP]; });
+const ANN_P={
+  m0:{V_h:['예시','원래 식의 예시 값 (사람 규모)'],Q_h:['예시','원래 식의 예시 값 (사람 규모)'],C_b:['예시','원래 식의 예시 값'],Kp_h:['예시','원래 식의 예시 값'],CL_int:['예시','원래 식의 예시 값 (사람 규모)']},
+  s2:{Vpct_h:['문헌',LIT_V],Kp_h:['가정',ASM_KP]},
+  iv:{BW:['문헌','Coggins 2025 6마리 평균 체중 3.53 kg'],V1_kg:['계산','Coggins 2025 Table 3 V1 ÷ 체중, GS-441524 환산'],
+      Q_kg:['계산','Coggins 2025 Table 3 Q (25번 고양이 제외) ÷ 체중, GS-441524 환산'],V2_kg:['계산','Coggins 2025 Table 3 V2 중앙값. 개체차가 매우 커서 범위로 볼 값']},
+  ck:{CL_kg:['계산','Cook 2022 IV 데이터 역산 (건강 고양이)'],Vc_kg:['계산','Cook 2022 IV 데이터 역산 (건강 고양이)'],Dose_mgkg:['문헌','Cook 2022 경구 GS-441524 25 mg/kg'],N_d:['문헌','1회 투여']},
+  c1:{BW:['문헌','증례 1 체중 2.3 kg (한만길 2020)'],Dose1:['문헌','증례 1 초기 용량. 실제 투여는 피하'],Dose2:['문헌','치료 20일째 증량 용량'],
+      N1:['문헌','증량 전 20일'],N2:['가정','증량 후 기간은 논문에 없음, 14일로 가정']}
+};
+const INFO={
+  m0:{title:'모델 0 · 간 구획 (기준 식)',goal:'처음 받은 식 그대로입니다. 혈중 농도 C_b가 상수라서 투여는 넣을 수 없고, 구조를 비교하는 기준선으로 씁니다.',
+      look:'그래프의 C_h 곡선과 요약 지표의 최종값',pass:'최종값이 정상상태 Kp·Q·C_b/(Q+CL_int)에 가까우면 정상입니다 (기본값에서 약 37.5).',warn:'변수 값은 사람 규모의 예시입니다.',next:'s1'},
+  s1:{title:'1단계 · 투여 계산 검증 (장관 + 혈액 1구획)',goal:'반복 경구 투여를 넣고, 같은 조건의 1구획 해석해와 곡선이 겹치는지 봅니다. 투약 기능이 맞게 계산되는지 확인하는 단계입니다.',
+      look:'요약 지표 아래 비교 지표의 최대 상대오차',pass:'0.1% 미만(✓)이면 통과입니다.',warn:'ka와 ke가 같아지면 해석해의 분모가 0이 되니 피하세요.',next:'s2'},
+  s2:{title:'2단계 · 혈액 + 간',goal:'모델 0의 간 식은 그대로 두고, 상수였던 C_b를 움직이는 혈액 구획으로 바꿉니다. 모델 0과 모델 1을 잇는 중간 단계입니다.',
+      look:'질량 보존 비교, 1구획 근사와의 차이',pass:'질량 보존이 ✓이면 통과입니다. 1구획 근사와는 간 평형이 늦는 초반에 차이가 나는 게 정상입니다.',warn:'간 제거는 well-stirred 형태라 유효 청소율이 CL_int보다 작습니다.',next:'m1'},
+  m1:{title:'3단계 · 모델 1 (경구 + 장기 6개 + 복수)',goal:'장관, 혈액, 간, 신장, 폐, 심장, 근육, 복수, 나머지 조직으로 확장한 최종 모델입니다.',
+      look:'질량 보존, 아래 Cooke 목표 대비 줄, 범례에서 장기 곡선 켜 보기',pass:'질량 보존 ✓. Cooke 목표는 AUC0–24 ≥ 220 µM·h, 3 µM 초과 ≥ 23 h, 10 µM 초과 ≥ 9 h입니다.',
+      warn:'장기 Kp와 복수 값은 가정입니다(변수 카드에서 ‘가정’으로 걸러 보세요). IV로 보려면 투약 일정에서 경구를 끄고 IV를 켜면 됩니다.',next:'iv'},
+  iv:{title:'4단계 · IV 실측 비교 (Coggins 2025)',goal:'FIP 고양이 6마리의 평균 2구획 파라미터로 remdesivir 15 mg/kg IV(GS-441524 환산)를 재현하고 논문 요약값과 비교합니다.',
+      look:'2구획 해석해 비교, 요약점 오차, AUC0–24와 관측값 17,391 ng·h/mL',pass:'해석해 비교 ✓. 요약값과는 평균 파라미터라 10~25% 정도 차이가 납니다.',
+      warn:'요약점 중 24 h 값(약 100 ng/mL)은 대략적인 값입니다. 개체별 원자료가 있으면 비교 카드의 실측 칸에 붙여 넣으세요.',next:'ck'},
+  ck:{title:'5단계 · 경구 보정 (Cook 2022)',goal:'건강한 고양이에게 GS-441524 25 mg/kg을 경구 투여한 결과에 F와 ka를 맞춥니다.',
+      look:'노출 지표의 AUC·최댓값과 관측(AUC 308 µM·h, Cmax 35 µM), C24 비교',pass:'F ≈ 1.0, ka ≈ 1.0 /h에서 AUC +3%, Cmax −6%, C24 −9%입니다.',
+      warn:'모델의 최고 농도 시간(약 2.3 h)은 관측(3~8 h)보다 빠릅니다. FIP 고양이 청소율(0.4)로는 F가 1을 넘어야 해서 두 집단의 차이를 고려해야 합니다.',next:'c1'},
+  c1:{title:'6단계 · 증례 1 시나리오 (경구 가정)',goal:'증례 논문의 고양이(2.3 kg)에 2 mg/kg을 20일, 이후 4 mg/kg을 투여한 경우를 모델 1로 계산해 Cooke 목표와 비교합니다.',
+      look:'노출 지표의 두 구간과 아래 Cooke 목표 대비 줄',pass:'정답이 있는 단계가 아니라 참고용 시나리오입니다.',
+      warn:'실제 투여는 피하인데 경구로 가정했습니다. 혈장 트로프가 임상 결과를 예측하지 못했다는 보고가 있어, 목표 미달을 치료 실패 원인으로 단정하면 안 됩니다.',next:null}
+};
+const STAGES=[['m0','모델 0'],['s1','1 검증'],['s2','2 혈액+간'],['m1','3 모델 1'],['iv','4 IV 실측'],['ck','5 경구 보정'],['c1','6 증례 1']];
+function applyMeta(m,key){
+  const ann=Object.assign({},key==='m0'?{}:ANN,ANN_P[key]||{});
+  m.vars.forEach(v=>{
+    const a=ann[v.name];
+    if(a){ v.tag=a[0]; v.note=a[1]; }
+    else{ v.tag=v.tag||(v.kind==='func'?'계산':''); v.note=v.note||''; }
+  });
+  (m.cmps||[]).forEach(c=>{ c.strict=c.kind==='ref'&&!/근사/.test(c.label); });
+  m.info=INFO[key]?Object.assign({key},INFO[key]):null;
+  return m;
+}
+const HELP={
+  tex:'왼쪽에서 고친 식이 그대로 LaTeX로 그려집니다. <b>LaTeX 복사</b>는 논문이나 문서에 붙여 넣을 코드를 복사합니다. 투약 일정은 Σ·δ 항으로 표시되지만, 실제 계산은 투약 시점마다 양을 더하는 방식입니다.',
+  plot:'실선은 시뮬레이션, 점선은 비교용 기준 곡선, 점은 실측값, x축 위 삼각형은 투약 시점입니다. 범례 칩을 누르면 그 곡선을 숨기거나 보입니다. 크기가 많이 다른 곡선이 섞여 납작해 보이면 칩으로 숨기거나 <b>y축 로그</b>를 켜세요. 그래프에 마우스를 올리면(휴대폰은 누르면) 그 시점의 값이 보입니다.',
+  metrics:'상태별 최종값·최댓값·AUC가 먼저 나오고, 그 아래 <b>비교 지표</b>와 <b>노출 지표</b>가 나옵니다. 계산 검증용 비교는 최대 상대오차 0.1% 미만이면 ✓입니다. <b>AFE</b>는 1이면 편향이 없고, 2면 평균 2배 과대 예측이라는 뜻입니다.',
+  eq:'<b>한 줄이 한 항</b>입니다. 체크박스로 항을 끄면 그 항이 결과에 주는 영향을 바로 비교할 수 있습니다. 식은 <code>Q_h*(C_b - C_h/Kp_h)</code>처럼 쓰고 곱셈은 반드시 <code>*</code>입니다. 처음 쓰는 이름은 Enter를 누르면 변수로 자동 추가됩니다. <b>ƒ</b> 버튼은 항 전체에 변수를 곱하거나 나눕니다. 방정식이 많으면 ▾ 버튼으로 접어 두세요.',
+  dose:'투약은 <b>시작 + k·τ</b> 시각마다(k = 0 … N−1) 대상 상태에 양을 더합니다. 예: 경구 12 mg/kg 하루 1회 7일이면 대상 <code>A_gut</code>, 양 <code>F*Dose_mgkg*BW</code>, 시작 <code>0</code>, τ <code>24</code>, N <code>7</code>. 용량이 중간에 바뀌면 줄을 두 개 만들고 두 번째 줄의 시작을 <code>N1*tau</code>처럼 쓰세요. 칸에 변수 이름을 쓰면 슬라이더로 바로 바꿔 볼 수 있습니다.',
+  var:'<b>상수</b>는 슬라이더로 바꾸고, <b>식</b> 변수는 다른 변수나 시간 t로 계산됩니다. 색 표시는 값의 근거입니다: <span class="tag tag-lit">문헌</span> 논문 값, <span class="tag tag-cal">보정</span> 데이터에 맞춘 값, <span class="tag tag-calc">계산</span> 문헌 값을 환산한 값, <span class="tag tag-asm">가정</span> 근거가 약해 스윕으로 확인할 값. 검색창에 이름이나 출처를 쓰면 찾을 수 있고, ‘근거 편집’으로 메모를 남길 수 있습니다.',
+  cmp:'<b>해석해 비교</b>는 계산이 맞는지 확인하는 용도이고, <b>실측 데이터 비교</b>는 모델이 현실과 맞는지 보는 용도입니다. 시뮬레이션 쪽 식의 단위를 비교 대상과 맞추세요: ng/mL는 <code>1000*C_b</code>, µM는 <code>1000/291.3*C_b</code>. 실측 데이터는 한 줄에 <code>시간, 값</code>으로 붙여 넣습니다.',
+  exp:'구간 AUC와 임계값 초과 시간을 계산합니다. Cooke 2026 목표와 비교하려면 식 <code>C_b</code>, 환산 계수 <code>1000/291.3</code>(µM), 구간은 마지막 투약 간격, 임계값 <code>3, 10</code>을 쓰세요. 목표는 AUC0–24 ≥ 220 µM·h, 3 µM 초과 ≥ 23 h, 10 µM 초과 ≥ 9 h입니다.',
+  sim:'시작·종료 시간과 단위를 정합니다. <b>변수 스윕</b>을 켜면 상수 하나를 여러 값으로 바꾼 곡선을 겹쳐 그려 민감도를 볼 수 있습니다. ‘가정’ 표시가 붙은 값(Kp, 복수 파라미터)부터 스윕해 보세요. 계산이 멈추면 상대 허용오차를 1e-6 정도로 키워 보세요.'
+};
+const HELP_HTML=`
+<h3>빠른 시작</h3>
+<ol>
+<li><b>단계 고르기</b>: 오른쪽 위 <b>진행 단계</b>에서 모델 0~6단계 중 하나를 누르면 그 모델을 불러옵니다. 처음이면 <b>1 검증</b>부터 보세요.</li>
+<li><b>값 바꾸기</b>: 왼쪽 <b>변수</b> 카드의 슬라이더를 움직이면 그래프와 지표가 바로 다시 계산됩니다.</li>
+<li><b>결과 읽기</b>: 진행 단계 카드의 판정 줄과, 요약 지표 아래 비교 지표·노출 지표를 확인합니다.</li>
+<li><b>보관하기</b>: 작업은 이 브라우저에만 자동 저장됩니다. 다른 곳에 두려면 <b>모델 내보내기 (JSON)</b>로 복사해 두세요. 단계를 새로 불러오면 지금 모델은 바뀝니다.</li>
+</ol>
+<h3>화면 구성</h3>
+<ul>
+<li><b>오른쪽</b>: 진행 단계, 수식(LaTeX), 그래프, 요약 지표</li>
+<li><b>왼쪽</b>: 방정식 → 투약 일정 → 변수 → 비교 → 노출 지표 → 시뮬레이션 설정</li>
+<li>각 영역 제목 옆 <b>?</b>를 누르면 그 영역 설명이 열립니다.</li>
+</ul>
+<h3>그래프 읽는 법</h3>
+<ul>
+<li>실선은 시뮬레이션, 점선은 기준 곡선(해석해), 점은 실측값, x축 위 삼각형은 투약 시점입니다.</li>
+<li>범례 칩을 누르면 곡선을 숨기거나 보입니다. 단계를 불러오면 혈액 농도(C_b)와 비교 곡선만 보이게 해 두었습니다.</li>
+</ul>
+<h3>1~6단계 흐름</h3>
+<div class="scroll-x"><table>
+<tr><th>단계</th><th>하는 일</th><th>확인할 것</th></tr>
+<tr><td>모델 0</td><td>원래 간 구획 식 (기준선)</td><td>정상상태 값</td></tr>
+<tr><td>1 검증</td><td>장관 + 혈액 1구획에 반복 경구 투여</td><td>해석해와 오차 0.1% 미만</td></tr>
+<tr><td>2 혈액+간</td><td>모델 0의 간 식에 움직이는 혈액 연결</td><td>질량 보존 ✓</td></tr>
+<tr><td>3 모델 1</td><td>경구 + 장기 6개 + 복수</td><td>질량 보존 ✓, Cooke 목표 대비</td></tr>
+<tr><td>4 IV 실측</td><td>Coggins 2025 평균 2구획 IV</td><td>요약값과의 차이</td></tr>
+<tr><td>5 경구 보정</td><td>Cook 2022 경구에 F, ka 맞추기</td><td>AUC·Cmax·C24 차이</td></tr>
+<tr><td>6 증례 1</td><td>2 → 4 mg/kg 시나리오 (경구 가정)</td><td>Cooke 목표 대비 (참고용)</td></tr>
+</table></div>
+<h3>식 쓰는 법</h3>
+<ul>
+<li>연산: <code>+ - * / ^</code>와 괄호. 곱셈은 반드시 <code>*</code> (숫자 바로 뒤는 생략 가능: <code>2t</code>).</li>
+<li>함수: <code>exp ln log10 sqrt abs sin cos tan tanh min max step floor ceil mod</code></li>
+<li>시간은 <code>t</code>, 원주율은 <code>pi</code>. <code>step(t-24)</code>는 t ≥ 24에서 1입니다.</li>
+<li>이름은 영문·숫자·<code>_</code>. <code>Kp_h</code>는 자동으로 K<sub>p,h</sub>처럼 그려지고, 변수 카드의 LaTeX 칸에서 표기를 바꿀 수 있습니다.</li>
+</ul>
+<h3>단위 환산</h3>
+<ul>
+<li>mg/L × 1000 = ng/mL</li>
+<li>mg/L × 1000 / 291.3 = µM (GS-441524 분자량 291.3)</li>
+<li>remdesivir 질량 × 0.483 = 같은 몰수의 GS-441524 질량</li>
+</ul>
+<h3>용어</h3>
+<div class="scroll-x"><table>
+<tr><td><b>구획</b></td><td>약이 고르게 섞인다고 보는 ‘통’. PBPK는 장기마다 통을 둔 모델입니다.</td></tr>
+<tr><td><b>청소율 CL</b></td><td>몸이 1시간에 약을 완전히 씻어 내는 혈액 부피(L/h). 클수록 빨리 사라집니다.</td></tr>
+<tr><td><b>분포용적 V</b></td><td>약이 퍼져 있는 가상의 부피(L/kg). 클수록 조직으로 많이 퍼집니다.</td></tr>
+<tr><td><b>반감기 t½</b></td><td>농도가 절반이 되는 시간. 이 약은 정맥 기준 약 5시간입니다.</td></tr>
+<tr><td><b>Cmax / 트로프</b></td><td>최고 농도 / 다음 투여 직전의 최저 농도</td></tr>
+<tr><td><b>AUC</b></td><td>농도 곡선 아래 넓이, 즉 총 노출량</td></tr>
+<tr><td><b>Kp</b></td><td>조직 농도 ÷ 혈장 농도. 장기에 약이 얼마나 쌓이는지</td></tr>
+<tr><td><b>F, ka</b></td><td>먹은 약 중 흡수되는 비율, 흡수 속도</td></tr>
+<tr><td><b>well-stirred</b></td><td>장기 안이 고르게 섞인다고 보는 간 모델. 혈류가 제한되어 유효 청소율이 CL_int보다 작아집니다.</td></tr>
+<tr><td><b>AFE</b></td><td>예측/관측 비의 기하평균. 1이면 편향 없음</td></tr>
+</table></div>
+<h3>값의 근거 표시</h3>
+<p><span class="tag tag-lit">문헌</span> 논문 값 · <span class="tag tag-cal">보정</span> 데이터에 맞춘 값 · <span class="tag tag-calc">계산</span> 문헌 값을 환산한 값 · <span class="tag tag-asm">가정</span> 근거가 약한 값 · <span class="tag tag-ex">예시</span> 설명용 값</p>
+<h3>자주 막히는 곳</h3>
+<ul>
+<li><b>그래프가 안 바뀝니다</b>: 그래프 위 빨간 안내에 오류 위치가 나옵니다. 고치면 다시 그려집니다.</li>
+<li><b>곡선이 바닥에 붙어 보입니다</b>: 단위가 다른 곡선이 섞였습니다. 범례 칩으로 숨기거나 y축 로그를 켜세요.</li>
+<li><b>변수 이름을 바꾸고 싶습니다</b>: 변수 카드의 이름 칸을 고치면 모든 식에 반영됩니다.</li>
+<li><b>슬라이더 범위가 좁습니다</b>: 값 칸에 직접 입력하면 범위가 자동으로 넓어집니다.</li>
+<li><b>계산이 느립니다</b>: 6단계처럼 기간이 긴 모델은 시간이 걸립니다. 종료 시간을 줄이거나 스윕 곡선 수를 줄이세요.</li>
+</ul>`;
+let M=defaultModel();
+try{ const raw=localStorage.getItem(LS_KEY); if(raw) M=normalize(JSON.parse(raw)); }catch(e){}
+const S={collapsed:new Set(),helpOpen:new Set(),varQ:'',varF:'',result:null,hidden:new Set(),hover:null,layout:null,f:null,P:null,compile:null,warnings:[],cmp:[],exps:[],eventTimes:[]};
+let saveTimer=0;
+function save(){ clearTimeout(saveTimer); saveTimer=setTimeout(()=>{ try{ localStorage.setItem(LS_KEY,JSON.stringify(M)); }catch(e){} },300); }
+
+const findVar=n=>M.vars.find(v=>v.name===n);
+const stateNames=()=>M.eqs.map(q=>q.state);
+function labelOf(name){
+  if(name==='t') return 't';
+  if(name==='pi') return '\\pi';
+  const v=findVar(name); if(v&&v.latex&&v.latex.trim()) return v.latex.trim();
+  const q=M.eqs.find(e=>e.state===name); if(q&&q.latex&&q.latex.trim()) return q.latex.trim();
+  return autoLatex(name);
+}
+const ctx=()=>({cdot:M.opts.cdot,label:labelOf});
+
+function buildTex(sub){
+  const c=ctx(); const lines=[];
+  (sub||M.eqs).forEach(q=>{
+    let cap='';
+    try{ const a=parse(q.cap||'1'); if(!(a.t==='num'&&a.v===1)) cap=toTex(a,3,c)+' \\, '; }catch(e){ cap='?\\,'; }
+    const L=labelOf(q.state);
+    const items=[];
+    q.terms.forEach(tm=>{
+      if(!tm.on) return;
+      try{
+        let ast=parse(tm.expr),sign=tm.sign;
+        while(ast.t==='neg'){ sign=-sign; ast=ast.a; }
+        items.push({sign,body:toTex(ast,sign<0?2:1,c)});
+      }catch(e){ items.push({sign:tm.sign,body:'\\text{?}'}); }
+    });
+    M.doses.forEach(d=>{
+      if(!d.on||d.target!==q.state) return;
+      try{
+        const a=parse(d.amt),st=parse(d.start),ta=parse(d.tau),nn=parse(d.n);
+        const arg='t'+((st.t==='num'&&st.v===0)?'':' - '+toTex(st,2,c))+' - k\\,'+toTex(ta,3,c);
+        const up=nn.t==='num'?String(nn.v-1):toTex(nn,1,c)+'-1';
+        items.push({sign:1,body:'\\sum_{k=0}^{'+up+'} '+toTex(a,3,c)+'\\,\\delta\\!\\left('+arg+'\\right)'});
+      }catch(e){ items.push({sign:1,body:'\\text{?}'}); }
+    });
+    let rhs='';
+    items.forEach((it,k)=>{
+      const neg=it.sign<0;
+      if(k===0) rhs+=(neg?'-':'')+it.body;
+      else rhs+=(M.opts.breakTerms?' \\\\\n&\\quad ':'')+(neg?' - ':' + ')+it.body;
+    });
+    if(!items.length) rhs='0';
+    lines.push(cap+'\\frac{d'+L+'}{dt} &= '+rhs);
+  });
+  return '\\begin{aligned}\n'+lines.join(' \\\\[0.9em]\n')+'\n\\end{aligned}';
+}
+
+/* ================= MathJax ================= */
+let mathReady=false;
+function setMath(el,tex,display){
+  el.dataset.tex=tex; el.dataset.display=display?'1':'0';
+  if(!mathReady||!window.MathJax||!window.MathJax.tex2svg){ el.textContent=tex; el.classList.add('rawtex'); return; }
+  el.classList.remove('rawtex');
+  try{ el.replaceChildren(window.MathJax.tex2svg(tex,{display:!!display})); }
+  catch(e){ el.textContent=tex; el.classList.add('rawtex'); }
+}
+function rerenderMath(){ document.querySelectorAll('[data-tex]').forEach(el=>setMath(el,el.dataset.tex,el.dataset.display==='1')); }
+function loadMathJax(){
+  window.MathJax={startup:{typeset:false},svg:{fontCache:'none'}};
+  const s=document.createElement('script');
+  s.src='https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.min.js'; s.async=true;
+  s.onload=()=>{
+    const pr=window.MathJax&&window.MathJax.startup&&window.MathJax.startup.promise;
+    Promise.resolve(pr).then(()=>{ mathReady=true; rerenderMath(); }).catch(()=>{});
+  };
+  s.onerror=()=>toast('수식 렌더러를 불러오지 못해 LaTeX 원문으로 표시합니다');
+  document.head.appendChild(s);
+}
+
+/* ================= 변수/식 조작 ================= */
+function forEachExpr(cb){
+  M.vars.forEach(v=>{ if(v.kind==='func') cb(()=>v.expr,s=>{v.expr=s;}); });
+  M.eqs.forEach(q=>{ cb(()=>q.cap,s=>{q.cap=s;}); q.terms.forEach(tm=>cb(()=>tm.expr,s=>{tm.expr=s;})); });
+  M.doses.forEach(d=>{ ['amt','start','tau','n'].forEach(k=>cb(()=>d[k],s=>{d[k]=s;})); });
+  M.exps.forEach(x=>{ ['expr','scale','t0','t1'].forEach(k=>{ if(x[k]) cb(()=>x[k],s=>{x[k]=s;}); }); });
+  M.cmps.forEach(c=>{ if(c.sim) cb(()=>c.sim,s=>{c.sim=s;}); if(c.kind==='ref'&&c.ref) cb(()=>c.ref,s=>{c.ref=s;}); });
+}
+function transformAll(fn){ forEachExpr((g,s)=>{ try{ s(toText(fn(parse(g())))); }catch(e){} }); }
+function usedNames(){
+  const set=new Set();
+  forEachExpr(g=>{ try{ collectVars(parse(g()),set); }catch(e){} });
+  return set;
+}
+function knownName(n){ return RESERVED.has(n)||!!findVar(n)||M.eqs.some(q=>q.state===n); }
+let varsTimer=0;
+function scheduleVarsRender(){ clearTimeout(varsTimer); varsTimer=setTimeout(()=>{ renderVars(); },220); }
+function ensureVars(ast){
+  const created=[];
+  collectVars(ast).forEach(n=>{ if(!knownName(n)){ M.vars.push(mkVar(n,1,'')); created.push(n); } });
+  if(created.length){ toast('변수 추가됨: '+created.join(', ')); scheduleVarsRender(); updateNameList(); }
+  return created;
+}
+function validName(n){ return /^[A-Za-z_][A-Za-z0-9_]*$/.test(n)&&!RESERVED.has(n); }
+function renameSymbol(oldN,newN,isState){
+  newN=newN.trim();
+  if(newN===oldN) return true;
+  if(!validName(newN)){ toast('이름은 영문/숫자/_ 만 쓸 수 있고 t, pi는 예약어입니다'); return false; }
+  if(knownName(newN)){ toast('이미 사용 중인 이름입니다: '+newN); return false; }
+  transformAll(a=>mapVars(a,n=>n.n===oldN?{t:'var',n:newN}:n));
+  if(isState){
+    const q=M.eqs.find(e=>e.state===oldN);
+    if(q.latex===autoLatex(oldN)||!q.latex) q.latex=autoLatex(newN);
+    q.state=newN;
+    M.doses.forEach(d=>{ if(d.target===oldN) d.target=newN; });
+  }else{
+    const v=findVar(oldN);
+    if(v.latex===autoLatex(oldN)||!v.latex) v.latex=autoLatex(newN);
+    v.name=newN;
+  }
+  if(M.sweep.name===oldN) M.sweep.name=newN;
+  if(M.sweep.show===oldN) M.sweep.show=newN;
+  if(S.hidden.has(oldN)){ S.hidden.delete(oldN); S.hidden.add(newN); }
+  return true;
+}
+function updateNameList(){
+  const dl=$('#names'); dl.replaceChildren();
+  [...stateNames(),...M.vars.map(v=>v.name),'t','pi'].forEach(n=>dl.append(h('option',{value:n})));
+}
+function rhsText(q){
+  let s='';
+  q.terms.forEach(tm=>{
+    let txt; try{ txt=toText(parse(tm.expr),tm.sign<0?2:1); }catch(e){ txt=tm.expr; }
+    s+=s?(tm.sign<0?' - ':' + ')+txt:(tm.sign<0?'-':'')+txt;
+  });
+  return s||'0';
+}
+
+/* 템플릿: 선택한 방정식에 항을 추가하고, 필요한 변수는 자동 생성 */
+const eff=q=>M.vars.some(v=>v.name==='Kp_h')?'('+q.state+'/Kp_h)':q.state;
+function addTerm(q,sign,expr,newVars){
+  (newVars||[]).forEach(a=>{ if(!knownName(a[0])) M.vars.push(mkVar(a[0],a[1],a[2])); });
+  let txt=expr; try{ txt=toText(parse(expr)); }catch(e){}
+  q.terms.push({sign,on:true,expr:txt});
+}
+const TEMPLATES=[
+  {label:'담즙 배설 (1차)  − CL_bile·C',apply:q=>addTerm(q,-1,'CL_bile*'+eff(q),[['CL_bile',5,'L/h']])},
+  {label:'포화 대사 (Michaelis–Menten)  − Vmax·C/(Km+C)',apply:q=>addTerm(q,-1,'Vmax*'+eff(q)+'/(Km + '+eff(q)+')',[['Vmax',20,'mg/h'],['Km',2,'mg/L']])},
+  {label:'1차 소실  − k_el·C',apply:q=>addTerm(q,-1,'k_el*'+q.state,[['k_el',1,'1/h']])},
+  {label:'일정 속도 유입 (주입)  + R_in',apply:q=>addTerm(q,1,'R_in',[['R_in',10,'mg/h']])},
+  {label:'경구 흡수 유입  + ka·F·Dose·e^(−ka·t)',apply:q=>addTerm(q,1,'ka*F*Dose*exp(-ka*t)',[['ka',2,'1/h'],['F',0.8,'-'],['Dose',100,'mg']])}
+];
+
+/* ================= 컴파일 & 시뮬레이션 ================= */
+const MATH1={exp:Math.exp,ln:Math.log,log10:Math.log10,sqrt:Math.sqrt,abs:Math.abs,sin:Math.sin,cos:Math.cos,tan:Math.tan,tanh:Math.tanh,floor:Math.floor,ceil:Math.ceil,step:x=>x>=0?1:0};
+function compile(){
+  const errors=[],warns=new Set();
+  const funcVars=new Map();
+  const seen=new Set();
+  M.vars.forEach(v=>{
+    if(seen.has(v.name)) errors.push('변수 이름이 중복되었습니다: '+v.name);
+    seen.add(v.name);
+    if(v.kind==='func'){ try{ funcVars.set(v.name,parse(v.expr)); }catch(e){ errors.push('변수 '+v.name+': '+e.message); } }
+  });
+  M.eqs.forEach(q=>{ if(seen.has(q.state)) errors.push('상태 변수 이름이 변수와 겹칩니다: '+q.state); seen.add(q.state); });
+  const sidx=new Map(M.eqs.map((q,i)=>[q.state,i]));
+  const params=new Set(M.vars.filter(v=>v.kind==='param').map(v=>v.name));
+  function inline(n,stack){
+    switch(n.t){
+      case 'var':
+        if(funcVars.has(n.n)){
+          if(stack.indexOf(n.n)>=0) throw new Error('순환 참조: '+stack.concat(n.n).join(' → '));
+          return inline(funcVars.get(n.n),stack.concat(n.n));
+        }
+        return n;
+      case 'neg': return {t:'neg',a:inline(n.a,stack)};
+      case 'bin': return {t:'bin',op:n.op,a:inline(n.a,stack),b:inline(n.b,stack)};
+      case 'fn': return {t:'fn',n:n.n,args:n.args.map(a=>inline(a,stack))};
+      default: return n;
+    }
+  }
+  function cl(n){
+    switch(n.t){
+      case 'num': { const v=n.v; return ()=>v; }
+      case 'var': {
+        if(n.n==='t') return t=>t;
+        if(n.n==='pi') return ()=>Math.PI;
+        if(sidx.has(n.n)){ const i=sidx.get(n.n); return (t,Y)=>Y[i]; }
+        if(params.has(n.n)){ const k=n.n; return (t,Y,P)=>P[k]; }
+        warns.add('정의되지 않은 변수 "'+n.n+'"는 0으로 계산합니다 (입력을 확정하면 자동으로 추가됩니다)');
+        return ()=>0;
+      }
+      case 'neg': { const a=cl(n.a); return (t,Y,P)=>-a(t,Y,P); }
+      case 'fn': {
+        const as=n.args.map(cl);
+        if(n.n==='mod'){ const ma=as[0],mb=as[1]; return (t,Y,P)=>{ const x=ma(t,Y,P),y=mb(t,Y,P); return x-y*Math.floor(x/y); }; }
+        if(n.n==='min') return (t,Y,P)=>Math.min.apply(null,as.map(f=>f(t,Y,P)));
+        if(n.n==='max') return (t,Y,P)=>Math.max.apply(null,as.map(f=>f(t,Y,P)));
+        const F=MATH1[n.n], a0=as[0]; return (t,Y,P)=>F(a0(t,Y,P));
+      }
+      default: {
+        const a=cl(n.a),b=cl(n.b);
+        switch(n.op){
+          case '+': return (t,Y,P)=>a(t,Y,P)+b(t,Y,P);
+          case '-': return (t,Y,P)=>a(t,Y,P)-b(t,Y,P);
+          case '*': return (t,Y,P)=>a(t,Y,P)*b(t,Y,P);
+          case '/': return (t,Y,P)=>a(t,Y,P)/b(t,Y,P);
+          default: return (t,Y,P)=>Math.pow(a(t,Y,P),b(t,Y,P));
+        }
+      }
+    }
+  }
+  const caps=[],terms=[];
+  M.eqs.forEach((q,i)=>{
+    const tag='방정식 '+(i+1);
+    let cap=()=>1;
+    try{ cap=cl(inline(parse(q.cap||'1'),[])); }catch(e){ errors.push(tag+' 좌변 계수: '+e.message); }
+    caps.push(cap);
+    const ts=[];
+    q.terms.forEach((tm,j)=>{
+      if(!tm.on) return;
+      try{ ts.push({s:tm.sign<0?-1:1,f:cl(inline(parse(tm.expr),[]))}); }
+      catch(e){ errors.push(tag+' 항 '+(j+1)+': '+e.message); }
+    });
+    terms.push(ts);
+  });
+  const doseFns=[];
+  M.doses.forEach((d,k)=>{
+    if(!d.on) return;
+    const tag='투약 '+(k+1);
+    const ti=M.eqs.findIndex(q=>q.state===d.target);
+    if(ti<0){ errors.push(tag+': 대상 상태 변수를 찾을 수 없습니다 ('+d.target+')'); return; }
+    try{ doseFns.push({ti,amt:cl(inline(parse(d.amt),[])),start:cl(inline(parse(d.start),[])),tau:cl(inline(parse(d.tau),[])),n:cl(inline(parse(d.n),[]))}); }
+    catch(e){ errors.push(tag+': '+e.message); }
+  });
+  const n=M.eqs.length;
+  const f=(t,Y,P)=>{
+    const d=new Array(n);
+    for(let i=0;i<n;i++){ let s=0; const ts=terms[i]; for(let j=0;j<ts.length;j++) s+=ts[j].s*ts[j].f(t,Y,P); d[i]=s/caps[i](t,Y,P); }
+    return d;
+  };
+  return {errors,warns:[...warns],f,caps,doseFns,expr:txt=>cl(inline(parse(txt),[]))};
+}
+
+const C2=1/5,C3=3/10,C4=4/5,C5=8/9;
+const A21=1/5,A31=3/40,A32=9/40,A41=44/45,A42=-56/15,A43=32/9,
+  A51=19372/6561,A52=-25360/2187,A53=64448/6561,A54=-212/729,
+  A61=9017/3168,A62=-355/33,A63=46732/5247,A64=49/176,A65=-5103/18656,
+  A71=35/384,A73=500/1113,A74=125/192,A75=-2187/6784,A76=11/84;
+const E1=71/57600,E3=-71/16695,E4=71/1920,E5=-17253/339200,E6=22/525,E7=-1/40;
+function lin(y,hh,ks,as){
+  const r=new Array(y.length);
+  for(let i=0;i<y.length;i++){ let s=0; for(let j=0;j<as.length;j++) s+=as[j]*ks[j][i]; r[i]=y[i]+hh*s; }
+  return r;
+}
+function integrate(f,P,y0,t0,t1,rtol,div){
+  const atol=1e-10; const n=y0.length;
+  let t=t0,y=y0.slice(); const T=[t],Y=[y.slice()];
+  div=div||400; const hmax=(t1-t0)/div; let hh=Math.min(hmax,(t1-t0)/100); let steps=0,warn=null;
+  let k1=f(t,y,P);
+  while(t<t1-1e-13*Math.abs(t1)){
+    if(steps++>200000){ warn='스텝 수가 너무 많아 중단했습니다 (강성 문제일 수 있음)'; break; }
+    if(t+hh>t1) hh=t1-t;
+    const k2=f(t+C2*hh,lin(y,hh,[k1],[A21]),P);
+    const k3=f(t+C3*hh,lin(y,hh,[k1,k2],[A31,A32]),P);
+    const k4=f(t+C4*hh,lin(y,hh,[k1,k2,k3],[A41,A42,A43]),P);
+    const k5=f(t+C5*hh,lin(y,hh,[k1,k2,k3,k4],[A51,A52,A53,A54]),P);
+    const k6=f(t+hh,lin(y,hh,[k1,k2,k3,k4,k5],[A61,A62,A63,A64,A65]),P);
+    const yn=lin(y,hh,[k1,k3,k4,k5,k6],[A71,A73,A74,A75,A76]);
+    const k7=f(t+hh,yn,P);
+    let en=0;
+    for(let i=0;i<n;i++){
+      const e=hh*(E1*k1[i]+E3*k3[i]+E4*k4[i]+E5*k5[i]+E6*k6[i]+E7*k7[i]);
+      const sc=atol+rtol*Math.max(Math.abs(y[i]),Math.abs(yn[i]));
+      en=Math.max(en,Math.abs(e)/sc);
+    }
+    if(!isFinite(en)){ warn='값이 발산했습니다 (NaN 또는 ∞). 식이나 변수 값을 확인해 주세요'; break; }
+    if(en<=1){ t+=hh; y=yn; k1=k7; T.push(t); Y.push(y.slice()); }
+    hh=Math.min(hmax,hh*Math.min(5,Math.max(0.2,0.9*Math.pow(en||1e-10,-0.2))));
+    if(hh<1e-14*Math.max(1,Math.abs(t))){ warn='스텝이 너무 작아져 중단했습니다'; break; }
+  }
+  return {T,Y,warn};
+}
+function makeEvents(C,P,nStates,t0,t1){
+  const ev=[],warn=[]; const Z=new Array(nStates).fill(0);
+  C.doseFns.forEach(d=>{
+    const st=d.start(0,Z,P),tau=d.tau(0,Z,P); let nn=Math.round(d.n(0,Z,P)); const amt=d.amt(0,Z,P);
+    if(!isFinite(st)||!isFinite(tau)||!isFinite(nn)||!isFinite(amt)) return;
+    if(nn>5000){ warn.push('투약 횟수가 너무 많아 5000회로 제한했습니다'); nn=5000; }
+    if(nn>1&&!(tau>0)){ warn.push('투약 간격 τ는 0보다 커야 합니다'); nn=1; }
+    for(let k=0;k<nn;k++){ const te=st+k*tau; if(te<t0-1e-12||te>t1+1e-12) continue; ev.push({t:te,i:d.ti,amt}); }
+  });
+  ev.sort((a,b)=>a.t-b.t);
+  return {ev,warn};
+}
+function integrateEvents(C,P,y0,t0,t1,rtol,events){
+  let y=y0.slice(); const T=[t0],Y=[y.slice()]; let warn=null,k=0,tc=t0;
+  const apply=te=>{
+    let any=false;
+    while(k<events.length&&events[k].t<=te+1e-12){ const e=events[k++]; y[e.i]+=e.amt/C.caps[e.i](te,y,P); any=true; }
+    if(any){ T.push(te); Y.push(y.slice()); }
+  };
+  apply(t0);
+  while(tc<t1-1e-13*Math.abs(t1)){
+    const tn=k<events.length?Math.min(events[k].t,t1):t1;
+    if(tn>tc+1e-13*Math.max(1,Math.abs(tc))){
+      const r=integrate(C.f,P,y,tc,tn,rtol,events.length>150?100:400);
+      for(let j=1;j<r.T.length;j++){ T.push(r.T[j]); Y.push(r.Y[j]); }
+      y=r.Y[r.Y.length-1].slice();
+      if(r.warn){ warn=r.warn; break; }
+    }
+    tc=tn; apply(tc);
+  }
+  return {T,Y,warn};
+}
+function interp1(T,V,t){
+  let lo=0,hi=T.length-1;
+  if(t<T[0]) return V[0];
+  if(t>=T[hi]) return V[hi];
+  while(hi-lo>1){ const m=(lo+hi)>>1; if(T[m]<=t) lo=m; else hi=m; }
+  const w=(t-T[lo])/(T[hi]-T[lo]||1);
+  return V[lo]+w*(V[hi]-V[lo]);
+}
+function parseData(text){
+  const out=[];
+  String(text).split(/\r?\n/).forEach(line=>{
+    const a=line.trim().split(/[\s,;\t]+/).map(Number);
+    if(a.length>=2&&Number.isFinite(a[0])&&Number.isFinite(a[1])) out.push({t:a[0],y:a[1]});
+  });
+  return out;
+}
+function cmpMetrics(pts,T,sv){
+  let n=0,se=0,maxA=0,maxR=0,lsum=0,ln=0,ymax=0; const ys=[];
+  pts.forEach(p=>{ ymax=Math.max(ymax,Math.abs(p.y)); });
+  pts.forEach(p=>{
+    const s=interp1(T,sv,p.t); if(!isFinite(s)||!isFinite(p.y)) return;
+    n++; const e=s-p.y; se+=e*e; maxA=Math.max(maxA,Math.abs(e)); ys.push(p.y);
+    if(ymax>0&&Math.abs(p.y)>=1e-3*ymax) maxR=Math.max(maxR,Math.abs(e)/Math.abs(p.y));
+    if(s>0&&p.y>0){ lsum+=Math.log10(s/p.y); ln++; }
+  });
+  const mean=ys.reduce((a,b)=>a+b,0)/(ys.length||1); let sst=0; ys.forEach(y=>{ sst+=(y-mean)*(y-mean); });
+  return {n,rmse:Math.sqrt(se/(n||1)),maxA,maxR:maxR*100,r2:sst>0?1-se/sst:NaN,afe:ln?Math.pow(10,lsum/ln):NaN};
+}
+function windowStats(T,V,a,b,thr){
+  let auc=0,mx=-Infinity; const above=thr.map(()=>0);
+  for(let k=0;k<T.length-1;k++){
+    const X0=T[k],X1=T[k+1]; if(X1<=X0||X1<=a||X0>=b) continue;
+    const sl=(V[k+1]-V[k])/(X1-X0), x0=Math.max(X0,a), x1=Math.min(X1,b), v0=V[k]+sl*(x0-X0), v1=V[k]+sl*(x1-X0), w=x1-x0;
+    auc+=(v0+v1)/2*w; mx=Math.max(mx,v0,v1);
+    thr.forEach((th,j)=>{
+      if(v0>=th&&v1>=th) above[j]+=w;
+      else if(v0<th&&v1<th) return;
+      else{ const fr=(th-v0)/(v1-v0); above[j]+=v0<th?w*(1-fr):w*fr; }
+    });
+  }
+  return {auc,mx,above};
+}
+function computeExps(C,P,main,warns){
+  const out=[]; const Z=new Array(M.eqs.length).fill(0);
+  M.exps.forEach((x,i)=>{
+    if(!x.on||!x.expr.trim()) return;
+    const tag='지표 '+(i+1);
+    try{
+      const fs=C.expr(x.expr), sc=C.expr(x.scale||'1')(0,Z,P), a=C.expr(x.t0||'0')(0,Z,P), b=C.expr(x.t1||'1')(0,Z,P);
+      const V=main.Y.map((y,k)=>fs(main.T[k],y,P)*sc);
+      const thr=String(x.thr||'').split(/[\s,;]+/).filter(z=>z!=='').map(Number).filter(Number.isFinite);
+      const r=windowStats(main.T,V,a,b,thr);
+      out.push({label:x.label||tag,a,b,thr,auc:r.auc,mx:r.mx,trough:interp1(main.T,V,b-1e-9),above:r.above});
+    }catch(e){ warns.push(tag+': '+e.message); }
+  });
+  return out;
+}
+function computeCmp(C,P,main,warns){
+  const out=[]; const T=main.T,Y=main.Y; const Z=new Array(M.eqs.length).fill(0);
+  M.cmps.forEach((c,ci)=>{
+    if(!c.on||!c.sim.trim()) return;
+    const tag='비교 '+(ci+1);
+    let fs; try{ fs=C.expr(c.sim); }catch(e){ warns.push(tag+' 시뮬레이션 식: '+e.message); return; }
+    const sv=Y.map((y,k)=>fs(T[k],y,P));
+    let pts=[],refLine=null;
+    if(c.kind==='ref'){
+      if(!c.ref.trim()) return;
+      let fr; try{ fr=C.expr(c.ref); }catch(e){ warns.push(tag+' 기준 식: '+e.message); return; }
+      const N=300; refLine=[];
+      for(let k=0;k<=N;k++){ const t=M.sim.t0+(M.sim.tEnd-M.sim.t0)*k/N; refLine.push({t,y:fr(t,Z,P)}); }
+      pts=refLine;
+    }else pts=parseData(c.data).filter(p=>p.t>=M.sim.t0-1e-9&&p.t<=M.sim.tEnd+1e-9);
+    out.push({ci,strict:!!c.strict,label:c.label||tag,kind:c.kind,sv,refLine,pts,met:cmpMetrics(pts,T,sv)});
+  });
+  return out;
+}
+
+function interp(T,Y,i,t){
+  let lo=0,hi=T.length-1;
+  if(t<T[0]) return Y[0][i];
+  if(t>=T[hi]) return Y[hi][i];
+  while(hi-lo>1){ const m=(lo+hi)>>1; if(T[m]<=t) lo=m; else hi=m; }
+  const w=(t-T[lo])/(T[hi]-T[lo]||1);
+  return Y[lo][i]+w*(Y[hi][i]-Y[lo][i]);
+}
+
+let rafId=0;
+function scheduleRun(){ if(rafId) return; rafId=requestAnimationFrame(()=>{ rafId=0; run(); }); }
+let texTimer=0;
+function touch(){ scheduleRun(); clearTimeout(texTimer); texTimer=setTimeout(renderEqView,90); }
+
+function run(){
+  const C=compile(); S.compile=C;
+  const errs=C.errors.slice(),warns=C.warns.slice();
+  if(!(M.sim.tEnd>M.sim.t0)) errs.push('종료 시간은 시작 시간보다 커야 합니다');
+  if(errs.length){ renderBanner(errs,warns); save(); return; }
+  const P0={}; M.vars.forEach(v=>{ if(v.kind==='param') P0[v.name]=num(v.value); });
+  const y0=M.eqs.map(q=>num(q.ic));
+  const rtol=Math.max(1e-12,num(M.sim.rtol)||1e-7);
+  const E0=makeEvents(C,P0,M.eqs.length,M.sim.t0,M.sim.tEnd); E0.warn.forEach(w=>warns.push(w));
+  const main=integrateEvents(C,P0,y0,M.sim.t0,M.sim.tEnd,rtol,E0.ev);
+  if(main.warn) warns.push(main.warn);
+  const sweeps=[];
+  if(M.sweep.on){
+    const sv=M.vars.find(v=>v.name===M.sweep.name&&v.kind==='param');
+    if(sv){
+      const n=Math.min(12,Math.max(2,Math.round(num(M.sweep.n)||2)));
+      const a=num(M.sweep.from),b=num(M.sweep.to);
+      const geo=M.sweep.log&&a>0&&b>0;
+      for(let k=0;k<n;k++){
+        const fr=k/(n-1);
+        const val=geo?a*Math.pow(b/a,fr):a+(b-a)*fr;
+        const Pv=Object.assign({},P0,{[sv.name]:val}); const Ev=makeEvents(C,Pv,M.eqs.length,M.sim.t0,M.sim.tEnd);
+        const r=integrateEvents(C,Pv,y0,M.sim.t0,M.sim.tEnd,rtol,Ev.ev);
+        sweeps.push({val,T:r.T,Y:r.Y});
+      }
+    }else warns.push('스윕할 상수 변수를 선택해 주세요');
+  }
+  S.result={main:{T:main.T,Y:main.Y},sweeps};
+  S.f=C.f; S.P=P0;
+  S.eventTimes=[...new Set(E0.ev.map(e=>e.t))];
+  S.cmp=computeCmp(C,P0,S.result.main,warns);
+  S.exps=computeExps(C,P0,S.result.main,warns);
+  const ds=$('#doseSummary'); if(ds) ds.textContent=E0.ev.length?('이번 실행: 총 '+E0.ev.length+'회 투약'):'';
+  renderBanner(errs,warns); renderLegend(); renderMetrics(); renderInfo(); drawPlot(); save();
+}
+function renderBanner(errs,warns){
+  const el=$('#banner'); el.replaceChildren();
+  if(errs.length) el.append(h('div',{class:'banner err'},errs.map(e=>h('div',{},e)),h('div',{},S.result?'오류를 고치면 갱신됩니다. 아래는 마지막 정상 결과입니다.':'')));
+  if(warns.length) el.append(h('div',{class:'banner warn'},warns.map(e=>h('div',{},e))));
+}
+
+/* ================= 결과 표시 ================= */
+function renderEqView(){
+  const tex=buildTex();
+  setMath($('#eqView'),tex,true);
+  $('#texCode').textContent=tex;
+  S.tex=tex;
+}
+function renderMetrics(){
+  const el=$('#metrics'); el.replaceChildren();
+  const R=S.result; if(!R) return;
+  const T=R.main.T,Y=R.main.Y,last=T.length-1;
+  const dEnd=S.f(T[last],Y[last],S.P);
+  const rows=M.eqs.map((q,i)=>{
+    const y=Y.map(r=>r[i]); const yf=y[last],y0=y[0];
+    let mx=-Infinity,tmx=T[0],mn=Infinity,auc=0;
+    for(let k=0;k<y.length;k++){
+      if(y[k]>mx){mx=y[k];tmx=T[k];} if(y[k]<mn) mn=y[k];
+      if(k>0) auc+=(y[k]+y[k-1])/2*(T[k]-T[k-1]);
+    }
+    let t95='-';
+    const dy=yf-y0;
+    if(Math.abs(dy)>1e-12*Math.max(1,Math.abs(yf))){
+      for(let k=1;k<y.length;k++){
+        if((y[k]-y0)/dy>=0.95){ const a=(y[k-1]-y0)/dy,b=(y[k]-y0)/dy; const w=(0.95-a)/((b-a)||1); t95=fmt(T[k-1]+w*(T[k]-T[k-1]),4); break; }
+      }
+    }
+    const rel=Math.abs(dEnd[i])*(T[last]-T[0])/Math.max(Math.abs(yf),1e-12);
+    const steady=rel<1e-3;
+    return h('tr',{},
+      h('td',{},q.state+(q.unit?' ['+q.unit+']':'')),
+      h('td',{},fmt(yf)),h('td',{},fmt(mx)+' @ '+fmt(tmx,3)),h('td',{},fmt(mn)),h('td',{},fmt(auc)),h('td',{},t95),
+      h('td',{class:steady?'ok':''},fmt(dEnd[i])+(steady?' ✓':'')));
+  });
+  const tu=M.sim.tunit||'t';
+  el.append(h('table',{class:'m'},
+    h('thead',{},h('tr',{},h('th',{},'상태'),h('th',{},'최종값'),h('th',{},'최댓값 @ '+tu),h('th',{},'최솟값'),h('th',{},'AUC (0→끝)'),h('th',{},'95% 도달 '+tu),h('th',{},'끝점 d/dt'))),
+    h('tbody',{},rows)));
+  el.append(h('p',{class:'hint',style:'margin:8px 0 0'},'✓ 표시는 끝점에서 거의 정상상태에 도달했다는 뜻입니다. 95% 도달 시간은 초깃값에서 최종값까지 변화의 95%에 이른 시점입니다.'));
+  if(S.cmp&&S.cmp.length){
+    const rows2=S.cmp.map(cm=>{
+      const m=cm.met, good=cm.kind==='ref'&&m.maxR<0.1;
+      return h('tr',{},h('td',{},cm.label),h('td',{},String(m.n)),h('td',{},fmt(m.rmse,3)),h('td',{},fmt(m.maxA,3)),
+        h('td',{class:good?'ok':''},fmt(m.maxR,3)+(good?' ✓':'')),h('td',{},isFinite(m.r2)?fmt(m.r2,7):'-'),h('td',{},isFinite(m.afe)?fmt(m.afe,4):'-'));
+    });
+    el.append(h('div',{style:'margin-top:14px;font-weight:650'},'비교 지표'));
+    el.append(h('table',{class:'m'},
+      h('thead',{},h('tr',{},h('th',{},'비교'),h('th',{},'점 수'),h('th',{},'RMSE'),h('th',{},'최대 절대오차'),h('th',{},'최대 상대오차 (%)'),h('th',{},'R²'),h('th',{},'AFE'))),
+      h('tbody',{},rows2)));
+    el.append(h('p',{class:'hint',style:'margin:8px 0 0'},'AFE는 시뮬레이션/기준 비의 기하평균(1이면 편향 없음)입니다. 최대 상대오차 0.1% 미만이면 ✓로 표시합니다.'));
+  }
+  if(S.exps&&S.exps.length){
+    const rows3=S.exps.map(x=>h('tr',{},h('td',{},x.label),h('td',{},fmt(x.a,4)+' – '+fmt(x.b,4)),h('td',{},fmt(x.auc,4)),h('td',{},fmt(x.mx,4)),h('td',{},fmt(x.trough,4)),
+      h('td',{},x.thr.map((th,j)=>fmt(th,3)+' 초과 '+fmt(x.above[j],3)+' h').join(' · ')||'-')));
+    el.append(h('div',{style:'margin-top:14px;font-weight:650'},'노출 지표'));
+    el.append(h('table',{class:'m'},
+      h('thead',{},h('tr',{},h('th',{},'이름'),h('th',{},'구간'),h('th',{},'AUC'),h('th',{},'최댓값'),h('th',{},'구간 끝 값'),h('th',{},'임계값 초과 시간'))),
+      h('tbody',{},rows3)));
+  }
+}
+const PALETTE=['#3a62e0','#e5484d','#12a594','#f0a020','#8e4ec6','#e93d82'];
+const CMPC=['#0b7285','#c2255c','#5f3dc4','#e8590c'];
+function renderLegend(){
+  const el=$('#legend'); el.replaceChildren();
+  if(M.sweep.on&&S.result&&S.result.sweeps.length){
+    el.append(h('span',{class:'muted'},'스윕: '+M.sweep.name+' = '+fmt(num(M.sweep.from),3)),h('span',{class:'grad'}),h('span',{class:'muted'},fmt(num(M.sweep.to),3)),
+      h('span',{class:'muted'},'· 표시 상태 '+M.sweep.show+' · 점선은 현재 값'));
+    return;
+  }
+  M.eqs.forEach((q,i)=>{
+    const off=S.hidden.has(q.state);
+    el.append(h('button',{class:'chip'+(off?' off':''),onclick:()=>{ if(off) S.hidden.delete(q.state); else S.hidden.add(q.state); renderLegend(); drawPlot(); }},
+      h('i',{style:'background:'+PALETTE[i%PALETTE.length]}),q.state+(q.unit?' ['+q.unit+']':'')));
+  });
+  (S.cmp||[]).forEach((cm,k)=>{
+    const key='cmp:'+cm.ci, off=S.hidden.has(key);
+    el.append(h('button',{class:'chip'+(off?' off':''),onclick:()=>{ if(off) S.hidden.delete(key); else S.hidden.add(key); renderLegend(); drawPlot(); }},
+      h('i',{style:'background:'+CMPC[k%CMPC.length]}),cm.label+(cm.kind==='ref'?' (기준 곡선)':' (실측)')));
+  });
+}
+function niceTicks(lo,hi,n){
+  const span=hi-lo; if(!(span>0)) return [lo];
+  const raw=span/n,mag=Math.pow(10,Math.floor(Math.log10(raw))),r=raw/mag;
+  const step=(r<1.5?1:r<3?2:r<7?5:10)*mag; const out=[];
+  for(let v=Math.ceil(lo/step-1e-9)*step;v<=hi+step*1e-9;v+=step) out.push(+v.toPrecision(12));
+  return out;
+}
+function decadeTicks(lo,hi){ const out=[]; for(let e=Math.round(Math.log10(lo));e<=Math.round(Math.log10(hi));e++) out.push(Math.pow(10,e)); return out; }
+const sweepColor=f=>'hsl('+(215-185*f)+' 75% 55%)';
+function drawPlot(){
+  const cv=$('#plot'); if(!cv||!cv.getContext) return;
+  const g=cv.getContext('2d'); if(!g) return;
+  const rect=cv.getBoundingClientRect(); const W=rect.width||600,H=rect.height||340,dpr=window.devicePixelRatio||1;
+  if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){ cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr); }
+  g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const css=getComputedStyle(document.documentElement);
+  const cMuted=css.getPropertyValue('--muted').trim()||'#667',cGrid=css.getPropertyValue('--grid').trim()||'#ddd',cText=css.getPropertyValue('--text').trim()||'#111',cSurf=css.getPropertyValue('--surface').trim()||'#fff',cBorder=css.getPropertyValue('--border').trim()||'#ccc';
+  const R=S.result;
+  if(!R){ g.fillStyle=cMuted; g.font='14px sans-serif'; g.textAlign='center'; g.fillText('식을 고치면 그래프가 표시됩니다',W/2,H/2); return; }
+  const series=[];
+  const sweepOn=R.sweeps.length>0;
+  if(sweepOn){
+    let si=M.eqs.findIndex(q=>q.state===M.sweep.show); if(si<0) si=0;
+    R.sweeps.forEach((s,k)=>series.push({T:s.T,y:s.Y.map(r=>r[si]),color:sweepColor(k/((R.sweeps.length-1)||1)),w:1.8}));
+    series.push({T:R.main.T,y:R.main.Y.map(r=>r[si]),color:cText,w:2.6,dash:[6,4]});
+  }else{
+    M.eqs.forEach((q,i)=>{ if(!S.hidden.has(q.state)) series.push({T:R.main.T,y:R.main.Y.map(r=>r[i]),color:PALETTE[i%PALETTE.length],w:2.4}); });
+  }
+  const marks=[];
+  if(!sweepOn) (S.cmp||[]).forEach((cm,k)=>{
+    if(S.hidden.has('cmp:'+cm.ci)) return;
+    const col=CMPC[k%CMPC.length];
+    series.push({T:R.main.T,y:cm.sv,color:col,w:2.4});
+    if(cm.refLine) series.push({T:cm.refLine.map(p=>p.t),y:cm.refLine.map(p=>p.y),color:col,w:2,dash:[5,4]});
+    else marks.push({color:col,pts:cm.pts});
+  });
+  const logY=!!M.opts.logY;
+  const xmin=M.sim.t0,xmax=M.sim.tEnd;
+  let ymin=Infinity,ymax=-Infinity;
+  series.forEach(s=>s.y.forEach(v=>{ if(isFinite(v)&&!(logY&&v<=0)){ if(v<ymin)ymin=v; if(v>ymax)ymax=v; } }));
+  marks.forEach(m=>m.pts.forEach(p=>{ if(isFinite(p.y)&&!(logY&&p.y<=0)){ if(p.y<ymin)ymin=p.y; if(p.y>ymax)ymax=p.y; } }));
+  if(!isFinite(ymin)){ ymin=logY?1e-3:0; ymax=logY?1:1; }
+  if(logY){
+    ymin=Math.pow(10,Math.floor(Math.log10(ymin))); ymax=Math.pow(10,Math.ceil(Math.log10(ymax)));
+    if(ymin>=ymax) ymax=ymin*10;
+  }else{
+    if(ymin>=0&&ymin<0.5*ymax) ymin=0;
+    const pad=((ymax-ymin)||1)*0.06; ymax+=pad; if(ymin!==0) ymin-=pad;
+    if(ymax<=ymin) ymax=ymin+1;
+  }
+  const L=56,Rm=14,Tp=12,B=36,pw=W-L-Rm,ph=H-Tp-B;
+  S.layout={L,pw,xmin,xmax};
+  const X=t=>L+(t-xmin)/(xmax-xmin)*pw;
+  const lg=Math.log10;
+  const Yf=logY?v=>Tp+(1-(lg(v)-lg(ymin))/(lg(ymax)-lg(ymin)))*ph:v=>Tp+(1-(v-ymin)/(ymax-ymin))*ph;
+  g.font='11px ui-monospace,Menlo,Consolas,monospace';
+  g.strokeStyle=cGrid; g.lineWidth=1; g.fillStyle=cMuted;
+  g.textAlign='right'; g.textBaseline='middle';
+  (logY?decadeTicks(ymin,ymax):niceTicks(ymin,ymax,5)).forEach(v=>{
+    const y=Math.round(Yf(v))+.5; if(y<Tp-1||y>Tp+ph+1) return;
+    g.beginPath(); g.moveTo(L,y); g.lineTo(L+pw,y); g.stroke(); g.fillText(fmt(v,3),L-6,y);
+  });
+  g.textAlign='center'; g.textBaseline='top';
+  niceTicks(xmin,xmax,6).forEach(t=>{
+    const x=Math.round(X(t))+.5; g.beginPath(); g.moveTo(x,Tp); g.lineTo(x,Tp+ph); g.stroke(); g.fillText(fmt(t,3),x,Tp+ph+6);
+  });
+  g.fillText('t ['+(M.sim.tunit||'')+']',L+pw/2,Tp+ph+21);
+  g.strokeStyle=cBorder; g.strokeRect(L+.5,Tp+.5,pw,ph);
+  if(S.eventTimes&&S.eventTimes.length&&S.eventTimes.length<=400){
+    g.fillStyle=cMuted;
+    S.eventTimes.forEach(te=>{ const x=X(te); if(x>=L&&x<=L+pw){ g.beginPath(); g.moveTo(x-3.5,Tp+ph); g.lineTo(x+3.5,Tp+ph); g.lineTo(x,Tp+ph-7); g.closePath(); g.fill(); } });
+  }
+  g.save(); g.beginPath(); g.rect(L,Tp,pw,ph); g.clip();
+  series.forEach(s=>{
+    g.strokeStyle=s.color; g.lineWidth=s.w; g.setLineDash(s.dash||[]); g.lineJoin='round'; g.beginPath();
+    let pen=false;
+    for(let k=0;k<s.T.length;k++){
+      const v=s.y[k];
+      if(!isFinite(v)||(logY&&v<=0)){ pen=false; continue; }
+      const x=X(s.T[k]),y=Yf(v);
+      if(pen) g.lineTo(x,y); else{ g.moveTo(x,y); pen=true; }
+    }
+    g.stroke();
+  });
+  marks.forEach(m=>{ g.fillStyle=m.color; m.pts.forEach(p=>{ if(!isFinite(p.y)||(logY&&p.y<=0)) return; g.beginPath(); g.arc(X(p.t),Yf(p.y),3.6,0,6.283); g.fill(); }); });
+  g.restore(); g.setLineDash([]);
+  if(S.hover!=null){
+    const t=Math.min(xmax,Math.max(xmin,S.hover)); const x=X(t);
+    g.strokeStyle=cMuted; g.lineWidth=1; g.setLineDash([3,3]); g.beginPath(); g.moveTo(x,Tp); g.lineTo(x,Tp+ph); g.stroke(); g.setLineDash([]);
+    const lines=[{txt:'t = '+fmt(t,4)+' '+(M.sim.tunit||''),color:null}];
+    M.eqs.forEach((q,i)=>{ if(S.hidden.has(q.state)) return; lines.push({txt:q.state+' = '+fmt(interp(R.main.T,R.main.Y,i,t),4),color:PALETTE[i%PALETTE.length]}); });
+    if(!sweepOn) (S.cmp||[]).forEach((cm,k)=>{
+      if(S.hidden.has('cmp:'+cm.ci)) return;
+      const col=CMPC[k%CMPC.length];
+      lines.push({txt:cm.label+' 시뮬 = '+fmt(interp1(R.main.T,cm.sv,t),4),color:col});
+      if(cm.refLine){ const rl=cm.refLine; const ix=Math.round((t-M.sim.t0)/(M.sim.tEnd-M.sim.t0)*(rl.length-1)); lines.push({txt:'   기준 = '+fmt(rl[Math.max(0,Math.min(rl.length-1,ix))].y,4),color:null}); }
+    });
+    g.font='12px ui-monospace,Menlo,Consolas,monospace';
+    let w=0; lines.forEach(l=>{ w=Math.max(w,g.measureText(l.txt).width); });
+    const bw=w+26,bh=lines.length*17+10; let bx=x+12; if(bx+bw>L+pw) bx=x-12-bw; const by=Tp+8;
+    g.fillStyle=cSurf; g.strokeStyle=cBorder; g.beginPath(); g.rect(bx,by,bw,bh); g.fill(); g.stroke();
+    g.textAlign='left'; g.textBaseline='middle';
+    lines.forEach((l,k)=>{
+      const yy=by+5+k*17+8.5;
+      if(l.color){ g.fillStyle=l.color; g.fillRect(bx+7,yy-4,8,8); }
+      g.fillStyle=cText; g.fillText(l.txt,bx+(l.color?20:8),yy);
+    });
+    if(!sweepOn) M.eqs.forEach((q,i)=>{
+      if(S.hidden.has(q.state)) return;
+      const v=interp(R.main.T,R.main.Y,i,t); if(!isFinite(v)||(logY&&v<=0)) return;
+      g.fillStyle=PALETTE[i%PALETTE.length]; g.beginPath(); g.arc(x,Yf(v),3.5,0,6.283); g.fill();
+    });
+  }
+}
+
+/* ================= 안내 UI ================= */
+function attachHelp(card,key){
+  const head=card&&card.querySelector('.card-h'); const h2=head&&head.querySelector('h2');
+  if(!h2||!HELP[key]||h2.querySelector('.helpbtn')) return;
+  const open=S.helpOpen.has(key);
+  const panel=h('div',{class:'helpbox',hidden:!open}); panel.innerHTML=HELP[key];
+  const btn=h('button',{class:'helpbtn','aria-expanded':String(open),'aria-label':'이 영역 도움말',title:'이 영역 도움말'},'?');
+  btn.addEventListener('click',()=>{ const now=panel.hidden; panel.hidden=!now; btn.setAttribute('aria-expanded',String(now)); if(now) S.helpOpen.add(key); else S.helpOpen.delete(key); });
+  h2.append(btn); head.after(panel);
+}
+function openHelp(){ const b=$('#helpBody'); if(!b.dataset.ready){ b.innerHTML=HELP_HTML; b.dataset.ready='1'; } $('#helpOverlay').hidden=false; $('#helpClose').focus(); }
+function closeHelp(){ $('#helpOverlay').hidden=true; }
+function loadPreset(v){
+  const PRESETS={m0:defaultModel,s1:presetStage1,s2:presetStage2,m1:presetModel1,iv:presetIV2c,ck:presetCook,c1:presetCase1};
+  if(!PRESETS[v]) return;
+  M=PRESETS[v](); if(v!=='m0') applyMeta(M,v);
+  S.hidden.clear(); S.collapsed.clear(); S.varQ=''; S.varF='';
+  if(v!=='m0') M.eqs.forEach(q=>{ if(q.state!=='C_b') S.hidden.add(q.state); });
+  if(M.eqs.length>4) M.eqs.forEach(q=>{ if(q.state!=='C_b') S.collapsed.add(q.state); });
+  $('#optCdot').checked=!!M.opts.cdot; $('#optBreak').checked=!!M.opts.breakTerms; $('#optLog').checked=!!M.opts.logY;
+  renderAll();
+  toast((M.info?M.info.title:'모델')+'을(를) 불러왔습니다');
+}
+function renderInfo(){
+  const el=$('#infoCard'); if(!el) return; el.replaceChildren();
+  const cur=M.info&&M.info.key;
+  el.append(h('div',{class:'card-h'},h('h2',{},'진행 단계'),h('span',{class:'muted',style:'font-size:12px'},'누르면 그 단계 모델로 바뀝니다')));
+  el.append(h('div',{class:'stepper'},STAGES.map(([k,lab])=>h('button',{class:'step'+(k===cur?' on':''),'aria-current':k===cur?'step':null,onclick:()=>loadPreset(k)},lab))));
+  if(!M.info){ el.append(h('p',{class:'hint',style:'margin:10px 0 0'},'지금은 직접 만든 모델입니다. 단계를 불러오면 목적과 확인할 곳이 여기에 표시됩니다.')); return; }
+  const I=M.info;
+  el.append(h('h3',{class:'stage-title'},I.title));
+  const dl=h('dl',{class:'stage-dl'});
+  [['목적',I.goal],['볼 곳',I.look],['기준',I.pass],['주의',I.warn]].forEach(([k,v])=>{ if(v) dl.append(h('dt',{},k),h('dd',{},v)); });
+  el.append(dl);
+  const strict=(S.cmp||[]).filter(c=>c.strict);
+  if(strict.length){
+    const ok=strict.filter(c=>c.met.maxR<0.1).length;
+    el.append(h('div',{class:'verdict '+(ok===strict.length?'pass':'part')},(ok===strict.length?'✓ ':'')+'계산 검증 '+strict.length+'개 중 '+ok+'개 통과 (최대 상대오차 0.1% 미만 기준)'));
+  }
+  (S.exps||[]).forEach(x=>{
+    if(x.thr.length!==2||x.thr[0]!==3||x.thr[1]!==10) return;
+    const pass=x.auc>=220&&x.above[0]>=23&&x.above[1]>=9;
+    el.append(h('div',{class:'verdict '+(pass?'pass':'fail')},x.label+' · Cooke 목표 대비: AUC '+fmt(x.auc,3)+' / 220 µM·h, 3 µM 초과 '+fmt(x.above[0],3)+' / 23 h, 10 µM 초과 '+fmt(x.above[1],3)+' / 9 h'));
+  });
+  if(I.next){ const nx=STAGES.find(z=>z[0]===I.next); el.append(h('div',{class:'row',style:'margin-top:12px'},h('button',{class:'btn sm primary',onclick:()=>loadPreset(I.next)},'다음 단계 불러오기 ('+nx[1]+')'))); }
+}
+const TAGCLS={'문헌':'lit','보정':'cal','계산':'calc','가정':'asm','예시':'ex'};
+const tagEl=t=>t?h('span',{class:'tag tag-'+(TAGCLS[t]||'calc')},t):null;
+function noteRow(v){
+  const wrap=h('div',{class:'vnote'});
+  const edit=()=>{
+    const sel=h('select',{'aria-label':'값의 근거'},['','문헌','보정','계산','가정','예시'].map(t=>h('option',{value:t},t||'표시 안 함'))); sel.value=v.tag||'';
+    const inp=h('input',{value:v.note||'',placeholder:'출처나 설명 (예: Coggins 2025 Table 3)','aria-label':'출처나 설명',style:'flex:1;min-width:180px'});
+    const done=()=>{ v.tag=sel.value; v.note=inp.value.trim(); save(); view(); };
+    inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); done(); } });
+    wrap.replaceChildren(sel,inp,h('button',{class:'btn sm',onclick:done},'완료')); inp.focus();
+  };
+  const view=()=>{ wrap.replaceChildren(...[tagEl(v.tag),v.note?h('span',{},v.note):null,h('button',{class:'linkbtn',onclick:edit},(v.note||v.tag)?'근거 편집':'근거 추가')].filter(Boolean)); };
+  view(); return wrap;
+}
+
+/* ================= 방정식 편집 UI ================= */
+function commitExpr(text){
+  try{ ensureVars(parse(text)); }catch(e){}
+}
+function termRow(q,i,j){
+  const tm=q.terms[j];
+  const row=h('div',{class:'term'+(tm.on?'':' off')});
+  const chk=h('input',{type:'checkbox',checked:tm.on,title:'이 항을 켜고 끕니다','aria-label':'항 사용',onchange:()=>{ tm.on=chk.checked; row.classList.toggle('off',!tm.on); touch(); }});
+  const sign=h('button',{class:'sign'+(tm.sign<0?' neg':''),title:'부호 바꾸기','aria-label':'부호 바꾸기',onclick:()=>{ tm.sign=-tm.sign; sign.textContent=tm.sign<0?'−':'+'; sign.classList.toggle('neg',tm.sign<0); touch(); }},tm.sign<0?'−':'+');
+  const inp=h('input',{class:'expr mono',value:tm.expr,spellcheck:'false',autocomplete:'off','aria-label':'항의 식'});
+  const err=h('div',{class:'err'}); const prev=h('div',{class:'prev'});
+  const upd=()=>{
+    tm.expr=inp.value;
+    try{ const ast=parse(inp.value); err.textContent=''; inp.classList.remove('bad'); setMath(prev,toTex(ast,0,ctx()),false); }
+    catch(e){ err.textContent=e.message; inp.classList.add('bad'); }
+    touch();
+  };
+  inp.addEventListener('input',upd);
+  inp.addEventListener('change',()=>commitExpr(inp.value));
+  try{ setMath(prev,toTex(parse(tm.expr),0,ctx()),false); }catch(e){ err.textContent=e.message; inp.classList.add('bad'); }
+  const tool=h('div',{class:'tool',hidden:true});
+  const opSel=h('select',{'aria-label':'연산'},
+    h('option',{value:'*'},'× 곱하기'),h('option',{value:'/'},'÷ 나누기'),h('option',{value:'+'},'+ 더하기'),h('option',{value:'-'},'− 빼기'),h('option',{value:'^'},'^ 거듭제곱'));
+  const opIn=h('input',{class:'mono',list:'names',placeholder:'변수 또는 식 (예: f_u, 1+E/Ki)',spellcheck:'false'});
+  const apply=()=>{
+    try{
+      const a=parse(inp.value),b=parse(opIn.value);
+      const na={t:'bin',op:opSel.value,a,b};
+      ensureVars(na);
+      inp.value=toText(na); upd(); opIn.value='';
+    }catch(e){ toast(e.message); }
+  };
+  opIn.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); apply(); } });
+  tool.append(h('span',{class:'muted'},'이 항에'),opSel,opIn,h('button',{class:'btn sm primary',onclick:apply},'적용'));
+  const mv=(d)=>{ const k=j+d; if(k<0||k>=q.terms.length) return; const x=q.terms[j]; q.terms[j]=q.terms[k]; q.terms[k]=x; renderEqs(); touch(); };
+  const btns=h('div',{class:'tbtns'},
+    h('button',{class:'icon',title:'변수 연산 붙이기','aria-label':'변수 연산 붙이기',onclick:()=>{ tool.hidden=!tool.hidden; if(!tool.hidden) opIn.focus(); }},'ƒ'),
+    h('button',{class:'icon',title:'위로','aria-label':'위로',onclick:()=>mv(-1)},'↑'),
+    h('button',{class:'icon',title:'아래로','aria-label':'아래로',onclick:()=>mv(1)},'↓'),
+    h('button',{class:'icon',title:'항 삭제','aria-label':'항 삭제',onclick:()=>{ q.terms.splice(j,1); renderEqs(); touch(); }},'✕'));
+  row.append(h('div',{class:'chk'},chk),sign,h('div',{},inp,prev,err),btns,tool);
+  return row;
+}
+function eqCard(q,i){
+  if(S.collapsed.has(q.state)){
+    const open=()=>{ S.collapsed.delete(q.state); renderEqs(); };
+    const mini=h('div',{class:'prev eqmini',title:'눌러서 펼치기',onclick:open}); setMath(mini,buildTex([q]),false);
+    return h('div',{class:'eqcard collapsed'},h('div',{class:'eqmini-row'},
+      h('button',{class:'icon',title:'펼치기','aria-label':q.state+' 방정식 펼치기','aria-expanded':'false',onclick:open},'▸'),
+      h('span',{class:'mono',style:'font-weight:600'},q.state),mini,h('span',{class:'muted',style:'font-size:12px;white-space:nowrap'},q.terms.length+'개 항')));
+  }
+  const card=h('div',{class:'eqcard'});
+  const stIn=h('input',{class:'mono w-s',value:q.state,spellcheck:'false','aria-label':'상태 변수 이름'});
+  stIn.addEventListener('change',()=>{ if(!renameSymbol(q.state,stIn.value,true)){ stIn.value=q.state; return; } renderAll(); });
+  const lxPrev=h('span',{class:'lbl'});
+  setMath(lxPrev,labelOf(q.state),false);
+  const lxIn=h('input',{class:'mono w-m',value:q.latex||'',placeholder:autoLatex(q.state),spellcheck:'false','aria-label':'상태 변수 LaTeX'});
+  lxIn.addEventListener('input',()=>{ q.latex=lxIn.value; setMath(lxPrev,labelOf(q.state),false); touch(); rerenderTermsLater(); });
+  const icIn=h('input',{type:'number',step:'any',class:'w-s',value:q.ic,'aria-label':'초깃값'});
+  icIn.addEventListener('input',()=>{ const v=parseFloat(icIn.value); if(Number.isFinite(v)){ q.ic=v; scheduleRun(); } });
+  const unIn=h('input',{class:'w-s',value:q.unit||'',placeholder:'단위','aria-label':'단위'});
+  unIn.addEventListener('input',()=>{ q.unit=unIn.value; renderLegend(); renderMetrics(); save(); });
+  const capIn=h('input',{class:'mono w-m',value:q.cap,spellcheck:'false','aria-label':'좌변 계수'});
+  const capErr=h('div',{class:'err'});
+  capIn.addEventListener('input',()=>{
+    q.cap=capIn.value;
+    try{ parse(capIn.value); capIn.classList.remove('bad'); capErr.textContent=''; }catch(e){ capIn.classList.add('bad'); capErr.textContent=e.message; }
+    touch();
+  });
+  capIn.addEventListener('change',()=>commitExpr(capIn.value));
+  const head=h('div',{class:'eq-head'},
+    h('button',{class:'icon',title:'접기','aria-label':q.state+' 방정식 접기','aria-expanded':'true',style:'align-self:center',onclick:()=>{ S.collapsed.add(q.state); renderEqs(); }},'▾'),
+    h('label',{class:'fld'},h('span',{},'상태 변수'),stIn),
+    h('label',{class:'fld'},h('span',{},'LaTeX 표기'),lxIn),
+    h('div',{class:'fld'},h('span',{},'미리보기'),lxPrev),
+    h('label',{class:'fld'},h('span',{},'초깃값'),icIn),
+    h('label',{class:'fld'},h('span',{},'단위'),unIn),
+    M.eqs.length>1?h('button',{class:'icon',title:'이 방정식 삭제','aria-label':'이 방정식 삭제',style:'margin-left:auto',onclick:()=>{ M.doses=M.doses.filter(d=>d.target!==q.state); M.eqs.splice(i,1); renderAll(); }},'✕'):null);
+  const lhs=h('div',{class:'lhsrow'},
+    h('label',{class:'fld'},h('span',{},'좌변 계수 (용량항, 예: V_h · 1이면 생략)'),capIn),capErr);
+  const terms=h('div',{class:'terms'},q.terms.map((tm,j)=>termRow(q,i,j)));
+  const tplSel=h('select',{'aria-label':'템플릿으로 항 추가'},h('option',{value:''},'템플릿으로 항 추가…'),TEMPLATES.map((t,k)=>h('option',{value:String(k)},t.label)));
+  tplSel.addEventListener('change',()=>{ if(tplSel.value==='') return; TEMPLATES[+tplSel.value].apply(q); renderEqs(); renderVars(); touch(); });
+  const bulkTa=h('textarea',{class:'mono',spellcheck:'false',placeholder:'Q_h*(C_b - C_h/Kp_h) - CL_int*C_h/Kp_h'});
+  const bulkErr=h('div',{class:'err'});
+  const bulk=h('details',{class:'bulk'},h('summary',{},'우변 전체를 한 번에 입력'),bulkTa,
+    h('div',{class:'row',style:'margin-top:6px'},h('button',{class:'btn sm primary',onclick:()=>{
+      try{
+        const items=flatten(parse(bulkTa.value),1,[]);
+        items.forEach(it=>ensureVars(it.ast));
+        q.terms=items.map(it=>({sign:it.sign,on:true,expr:toText(it.ast)}));
+        bulkErr.textContent=''; renderEqs(); touch();
+      }catch(e){ bulkErr.textContent=e.message; }
+    }},'+/− 기준으로 항 나누어 적용'),bulkErr));
+  bulk.addEventListener('toggle',()=>{ if(bulk.open) bulkTa.value=rhsText(q); });
+  const actions=h('div',{class:'eq-actions'},
+    h('button',{class:'btn sm',onclick:()=>{ q.terms.push({sign:1,on:true,expr:'0'}); renderEqs(); touch(); }},'+ 항 추가'),tplSel);
+  card.append(head,lhs,terms,actions,bulk);
+  return card;
+}
+function exprField(label,obj,key,wide,multi){
+  const inp=multi?h('textarea',{class:'mono',rows:'3',spellcheck:'false','aria-label':label}):h('input',{class:'mono',spellcheck:'false','aria-label':label});
+  inp.value=obj[key];
+  const err=h('div',{class:'err'});
+  const chk=()=>{ try{ parse(inp.value); inp.classList.remove('bad'); err.textContent=''; }catch(e){ inp.classList.add('bad'); err.textContent=e.message; } };
+  inp.addEventListener('input',()=>{ obj[key]=inp.value; chk(); touch(); });
+  inp.addEventListener('change',()=>commitExpr(inp.value));
+  chk();
+  return h('label',{class:'fld'+(wide?' wide':'')},h('span',{},label),inp,err);
+}
+function doseRow(d,i){
+  const row=h('div',{class:'dose'+(d.on?'':' off')});
+  const chk=h('input',{type:'checkbox',checked:d.on,'aria-label':'투약 사용',onchange:()=>{ d.on=chk.checked; row.classList.toggle('off',!d.on); touch(); }});
+  const lab=h('input',{value:d.label,placeholder:'이름 (예: 2 mg/kg 단계)','aria-label':'투약 이름',style:'flex:1;min-width:140px'});
+  lab.addEventListener('input',()=>{ d.label=lab.value; save(); });
+  const tg=h('select',{'aria-label':'대상 상태'},M.eqs.map(q=>h('option',{value:q.state},q.state)));
+  tg.value=d.target;
+  if(tg.value!==d.target&&M.eqs.length){ d.target=M.eqs[0].state; tg.value=d.target; }
+  tg.addEventListener('change',()=>{ d.target=tg.value; touch(); });
+  const del=h('button',{class:'icon',title:'투약 삭제','aria-label':'투약 삭제',onclick:()=>{ M.doses.splice(i,1); renderDoses(); touch(); }},'✕');
+  row.append(
+    h('div',{class:'row'},h('div',{class:'chk'},chk),lab,h('span',{class:'muted'},'대상'),tg,del),
+    h('div',{class:'dosegrid'},exprField('투여량 (양)',d,'amt'),exprField('시작 시각',d,'start'),exprField('간격 τ',d,'tau'),exprField('횟수 N',d,'n')));
+  return row;
+}
+function renderDoses(){
+  const root=$('#doseCard'); root.replaceChildren();
+  root.append(h('div',{class:'card-h'},h('h2',{},'투약 일정'),
+    h('div',{class:'row'},h('span',{class:'muted',id:'doseSummary'}),
+      h('button',{class:'btn sm',onclick:()=>{ M.doses.push({on:true,label:'',target:M.eqs[0].state,amt:'0',start:'0',tau:'24',n:'1'}); renderDoses(); touch(); }},'+ 투약 추가'))));
+  root.append(h('p',{class:'hint'},'시각 = 시작 + k·τ (k = 0 … N−1)마다 대상 상태에 양을 더하고, 그 지점에서 적분을 끊었다가 다시 시작합니다. 모든 칸이 식이라 용량·체중·횟수를 변수(슬라이더)로 쓸 수 있습니다. 대상이 농도 상태라면 좌변 계수로 나눈 만큼 올라갑니다. 용량 단계가 바뀌면 투약 줄을 나누세요.'));
+  if(!M.doses.length) root.append(h('p',{class:'muted',style:'margin:0'},'투약이 없습니다. “+ 투약 추가”로 시작하세요.'));
+  M.doses.forEach((d,i)=>root.append(doseRow(d,i)));
+  attachHelp(root,'dose');
+}
+function cmpRow(c,i){
+  const row=h('div',{class:'cmprow'+(c.on?'':' off')});
+  const chk=h('input',{type:'checkbox',checked:c.on,'aria-label':'비교 사용',onchange:()=>{ c.on=chk.checked; row.classList.toggle('off',!c.on); touch(); }});
+  const lab=h('input',{value:c.label,placeholder:c.kind==='ref'?'이름 (예: 1구획 해석해)':'이름 (예: Coggins 2025 평균)','aria-label':'비교 이름',style:'flex:1;min-width:140px'});
+  lab.addEventListener('input',()=>{ c.label=lab.value; renderLegend(); renderMetrics(); save(); });
+  const del=h('button',{class:'icon',title:'비교 삭제','aria-label':'비교 삭제',onclick:()=>{ M.cmps.splice(i,1); renderCmp(); touch(); }},'✕');
+  row.append(h('div',{class:'row'},h('div',{class:'chk'},chk),h('span',{class:'badge'},c.kind==='ref'?'해석해 / 기준식':'실측 데이터'),lab,del));
+  row.append(exprField('시뮬레이션 쪽 식 (상태·상수 사용, 예: A_c/V_c)',c,'sim',true));
+  if(c.kind==='ref') row.append(exprField('기준 식 (t의 함수)',c,'ref',true,true));
+  else{
+    const ta=h('textarea',{rows:'5',spellcheck:'false',placeholder:'한 줄에 “시간, 값” (예)\n1, 2632\n8, 800\n24, 100','aria-label':'실측 데이터'});
+    ta.value=c.data;
+    const info=h('div',{class:'muted',style:'font-size:12px'});
+    const upd=()=>{ info.textContent=parseData(ta.value).length+'개 점 인식 (시간 단위와 값 단위는 시뮬레이션 쪽 식과 맞춰 주세요)'; };
+    ta.addEventListener('input',()=>{ c.data=ta.value; upd(); touch(); });
+    upd();
+    row.append(h('label',{class:'fld wide'},h('span',{},'실측 데이터'),ta,info));
+  }
+  return row;
+}
+function renderCmp(){
+  const root=$('#cmpCard'); root.replaceChildren();
+  root.append(h('div',{class:'card-h'},h('h2',{},'비교 (해석해 · 실측)'),
+    h('div',{class:'row'},
+      h('button',{class:'btn sm',onclick:()=>{ M.cmps.push({on:true,label:'',sim:'',kind:'ref',ref:'',data:''}); renderCmp(); }},'+ 해석해 비교'),
+      h('button',{class:'btn sm',onclick:()=>{ M.cmps.push({on:true,label:'',sim:'',kind:'data',ref:'',data:''}); renderCmp(); }},'+ 실측 데이터 비교'))));
+  root.append(h('p',{class:'hint'},'시뮬레이션 쪽 식(농도 = 양/부피 같은 조합)과 기준 곡선 또는 실측 점을 겹쳐 그리고 오차를 계산합니다. 기준 식에는 t와 상수, 식 변수를 쓸 수 있어서 해석해를 그대로 옮겨 쓸 수 있습니다 (floor, mod 지원).'));
+  if(!M.cmps.length) root.append(h('p',{class:'muted',style:'margin:0'},'비교 항목이 없습니다.'));
+  M.cmps.forEach((c,i)=>root.append(cmpRow(c,i)));
+  attachHelp(root,'cmp');
+}
+function expRow(x,i){
+  const row=h('div',{class:'cmprow'+(x.on?'':' off')});
+  const chk=h('input',{type:'checkbox',checked:x.on,'aria-label':'지표 사용',onchange:()=>{ x.on=chk.checked; row.classList.toggle('off',!x.on); touch(); }});
+  const lab=h('input',{value:x.label,placeholder:'이름 (예: 마지막 간격 노출)','aria-label':'지표 이름',style:'flex:1;min-width:140px'});
+  lab.addEventListener('input',()=>{ x.label=lab.value; renderMetrics(); save(); });
+  const del=h('button',{class:'icon',title:'지표 삭제','aria-label':'지표 삭제',onclick:()=>{ M.exps.splice(i,1); renderExps(); touch(); }},'✕');
+  const thr=h('input',{class:'mono',value:x.thr,placeholder:'예: 3, 10','aria-label':'임계값'});
+  thr.addEventListener('input',()=>{ x.thr=thr.value; touch(); });
+  row.append(h('div',{class:'row'},h('div',{class:'chk'},chk),lab,del),
+    exprField('시뮬레이션 쪽 식 (예: C_b)',x,'expr',true),
+    h('div',{class:'dosegrid'},exprField('단위 환산 계수',x,'scale'),exprField('구간 시작',x,'t0'),exprField('구간 끝',x,'t1'),
+      h('label',{class:'fld'},h('span',{},'임계값 (쉼표로 여러 개)'),thr)));
+  return row;
+}
+function renderExps(){
+  const root=$('#expCard'); root.replaceChildren();
+  root.append(h('div',{class:'card-h'},h('h2',{},'노출 지표 (구간 AUC · 임계값 초과 시간)'),
+    h('button',{class:'btn sm',onclick:()=>{ M.exps.push({on:true,label:'',expr:'',scale:'1',t0:'0',t1:String(M.sim.tEnd),thr:''}); renderExps(); }},'+ 지표 추가')));
+  root.append(h('p',{class:'hint'},'식 × 환산 계수를 구간 [시작, 끝]에서 적분해 AUC를, 임계값을 넘은 시간을 계산합니다. 예: mg/L → µM은 1000/분자량을 곱하면 됩니다 (GS-441524 분자량 291.3).'));
+  if(!M.exps.length) root.append(h('p',{class:'muted',style:'margin:0'},'지표가 없습니다.'));
+  M.exps.forEach((x,i)=>root.append(expRow(x,i)));
+  attachHelp(root,'exp');
+}
+function rerenderTermsLater(){ clearTimeout(rerenderTermsLater.t); rerenderTermsLater.t=setTimeout(()=>{ document.querySelectorAll('.term .prev').forEach(p=>{ const inp=p.parentNode.querySelector('input'); try{ setMath(p,toTex(parse(inp.value),0,ctx()),false); }catch(e){} }); },120); }
+function renderEqs(){
+  const root=$('#eqEditor'); root.replaceChildren();
+  const allC=M.eqs.length>0&&M.eqs.every(q=>S.collapsed.has(q.state));
+  root.append(h('div',{class:'card-h'},h('h2',{},'방정식'),
+    h('div',{class:'row'},h('button',{class:'btn sm',onclick:()=>{ S.collapsed.clear(); if(!allC) M.eqs.forEach(q=>S.collapsed.add(q.state)); renderEqs(); }},allC?'모두 펼치기':'모두 접기'),
+    h('button',{class:'btn sm',onclick:()=>{
+      let k=M.eqs.length+1,name='C'+k; while(knownName(name)){ k++; name='C'+k; }
+      M.eqs.push({state:name,latex:'',cap:'1',ic:0,unit:'',terms:[{sign:-1,on:true,expr:'k_el*'+name}]});
+      ensureVars(parse('k_el*'+name)); renderAll();
+    }},'+ 방정식(구획) 추가'))));
+  root.append(h('p',{class:'hint'},'좌변 계수 × d(상태)/dt = 우변 항의 합. 항마다 켜고 끌 수 있고, 식 안에서 처음 쓴 이름은 변수로 자동 추가됩니다.'));
+  M.eqs.forEach((q,i)=>root.append(eqCard(q,i)));
+  const subIn=h('input',{class:'mono',list:'names',placeholder:'바꿀 변수',style:'width:120px',spellcheck:'false'});
+  const subEx=h('input',{class:'mono',placeholder:'대체할 식, 예: Kp_h*(1 + I/Ki)',style:'flex:1;min-width:180px',spellcheck:'false'});
+  const doSub=()=>{
+    const target=subIn.value.trim();
+    if(!knownName(target)||RESERVED.has(target)){ toast('바꿀 변수를 목록에서 골라 주세요'); return; }
+    try{
+      const ex=parse(subEx.value); ensureVars(ex);
+      transformAll(a=>mapVars(a,n=>n.n===target?ex:n));
+      subEx.value=''; renderAll(); toast(target+' → 치환했습니다');
+    }catch(e){ toast(e.message); }
+  };
+  subEx.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); doSub(); } });
+  root.append(h('div',{class:'tools'},
+    h('h3',{},'변수 치환'),
+    h('p',{class:'hint',style:'margin-bottom:8px'},'모든 식에서 변수 하나를 다른 식으로 한꺼번에 바꿉니다. 예: Kp_h → Kp_h*(1 + I/Ki)'),
+    h('div',{class:'row'},subIn,h('span',{class:'muted'},'→'),subEx,h('button',{class:'btn sm primary',onclick:doSub},'모든 식에 적용'))));
+  root.append(h('div',{class:'syntax'},
+    '문법: ',h('code',{},'+ − * / ^'),' 괄호, 함수 ',h('code',{},'exp ln log10 sqrt abs sin cos tan tanh min max step'),
+    ' · 시간은 ',h('code',{},'t'),', 원주율은 ',h('code',{},'pi'),' · ',h('code',{},'step(t-1)'),'은 t≥1에서 1 (투여 시점 등에 사용)'));
+  attachHelp(root,'eq');
+}
+
+/* ================= 변수 UI ================= */
+function varCard(v,used){
+  const card=h('div',{class:'vcard'});
+  const nameIn=h('input',{class:'mono',style:'width:112px',value:v.name,spellcheck:'false','aria-label':'변수 이름'});
+  nameIn.addEventListener('change',()=>{ if(!renameSymbol(v.name,nameIn.value,false)){ nameIn.value=v.name; return; } renderAll(); });
+  const lbl=h('span',{class:'lbl'}); setMath(lbl,labelOf(v.name),false);
+  const lxIn=h('input',{class:'mono',style:'width:120px',value:v.latex||'',placeholder:autoLatex(v.name),spellcheck:'false','aria-label':'LaTeX 표기'});
+  lxIn.addEventListener('input',()=>{ v.latex=lxIn.value; setMath(lbl,labelOf(v.name),false); touch(); rerenderTermsLater(); });
+  const kind=h('select',{'aria-label':'종류'},h('option',{value:'param'},'상수 (슬라이더)'),h('option',{value:'func'},'식 (t 등의 함수)'));
+  kind.value=v.kind;
+  kind.addEventListener('change',()=>{ if(kind.value==='func'&&v.kind==='param') v.expr=String(v.value); v.kind=kind.value; renderVars(); fillSweepSel(); touch(); });
+  const unit=h('input',{style:'width:70px',value:v.unit||'',placeholder:'단위','aria-label':'단위'});
+  unit.addEventListener('input',()=>{ v.unit=unit.value; save(); });
+  const del=h('button',{class:'icon',title:'변수 삭제','aria-label':'변수 삭제',onclick:()=>{
+    if(usedNames().has(v.name)){ toast(v.name+'은(는) 식에서 사용 중입니다. 먼저 식에서 지워 주세요'); return; }
+    M.vars.splice(M.vars.indexOf(v),1); if(M.sweep.name===v.name) M.sweep.on=false;
+    renderVars(); renderSim(); updateNameList(); touch();
+  }},'✕');
+  card.append(h('div',{class:'vrow1'},
+    h('label',{class:'fld'},h('span',{},'이름'),nameIn),
+    h('label',{class:'fld'},h('span',{},'LaTeX'),lxIn),
+    h('div',{class:'fld'},h('span',{},'표기'),lbl),
+    h('label',{class:'fld'},h('span',{},'종류'),kind),
+    h('label',{class:'fld'},h('span',{},'단위'),unit),
+    used?null:h('span',{class:'badge'},'식에서 안 씀'),
+    h('span',{style:'margin-left:auto'},del)));
+  card.append(noteRow(v));
+  if(v.kind==='param'){
+    const slider=h('input',{type:'range',class:'slider',min:'0',max:'1000',step:'1','aria-label':v.name+' 슬라이더'});
+    const val=h('input',{type:'number',step:'any',class:'val mono',value:v.value,'aria-label':v.name+' 값'});
+    const mn=h('input',{type:'number',step:'any',value:v.min,'aria-label':'최솟값',title:'슬라이더 최솟값'});
+    const mx=h('input',{type:'number',step:'any',value:v.max,'aria-label':'최댓값',title:'슬라이더 최댓값'});
+    const logChk=h('input',{type:'checkbox',checked:v.log});
+    const useLog=()=>v.log&&v.min>0&&v.max>v.min;
+    const toPos=x=>useLog()?1000*Math.log(Math.max(x,v.min)/v.min)/Math.log(v.max/v.min):1000*(x-v.min)/((v.max-v.min)||1);
+    const fromPos=p=>useLog()?v.min*Math.pow(v.max/v.min,p/1000):v.min+(v.max-v.min)*p/1000;
+    const sync=()=>{ slider.value=Math.min(1000,Math.max(0,toPos(v.value))); };
+    sync();
+    slider.addEventListener('input',()=>{ const x=parseFloat(fromPos(+slider.value).toPrecision(4)); v.value=x; val.value=x; scheduleRun(); });
+    val.addEventListener('input',()=>{
+      const x=parseFloat(val.value); if(!Number.isFinite(x)) return;
+      v.value=x;
+      if(x>v.max){ v.max=x*2; mx.value=v.max; }
+      if(x<v.min){ v.min=x<0?x*2:0; mn.value=v.min; if(useLog()===false&&v.log){ v.log=false; logChk.checked=false; } }
+      sync(); scheduleRun();
+    });
+    mn.addEventListener('change',()=>{ const x=parseFloat(mn.value); if(Number.isFinite(x)&&x<v.max){ v.min=x; sync(); save(); } else mn.value=v.min; });
+    mx.addEventListener('change',()=>{ const x=parseFloat(mx.value); if(Number.isFinite(x)&&x>v.min){ v.max=x; sync(); save(); } else mx.value=v.max; });
+    logChk.addEventListener('change',()=>{
+      if(logChk.checked){
+        if(v.value<=0){ toast('로그 스케일은 0보다 큰 값에서만 쓸 수 있습니다'); logChk.checked=false; return; }
+        v.log=true; if(v.min<=0){ v.min=v.value/100; mn.value=v.min; } if(v.max<=v.min){ v.max=v.value*100; mx.value=v.max; }
+      }else v.log=false;
+      sync(); save();
+    });
+    card.append(h('div',{class:'vrow2'},val,mn,slider,mx,h('label',{class:'chk'},logChk,'로그')));
+  }else{
+    const ex=h('input',{class:'expr mono',style:'flex:1 1 220px',value:v.expr,spellcheck:'false','aria-label':'변수 식'});
+    const err=h('div',{class:'err'}); const prev=h('div',{class:'prev'});
+    const upd=()=>{
+      v.expr=ex.value;
+      try{ const a=parse(ex.value); ex.classList.remove('bad'); err.textContent=''; setMath(prev,labelOf(v.name)+'(t) = '+toTex(a,0,ctx()),false); }
+      catch(e){ ex.classList.add('bad'); err.textContent=e.message; }
+      touch();
+    };
+    ex.addEventListener('input',upd); ex.addEventListener('change',()=>commitExpr(ex.value));
+    try{ setMath(prev,labelOf(v.name)+'(t) = '+toTex(parse(v.expr),0,ctx()),false); }catch(e){}
+    card.append(h('div',{class:'vrow2',style:'flex-direction:column;align-items:stretch;gap:4px'},h('div',{class:'row'},h('span',{class:'muted'},v.name+' ='),ex),prev,err));
+  }
+  return card;
+}
+function renderVars(){
+  const root=$('#varCard'); root.replaceChildren();
+  const clearF=()=>{ S.varQ=''; S.varF=''; };
+  root.append(h('div',{class:'card-h'},h('h2',{},'변수'),
+    h('div',{class:'row'},
+      h('button',{class:'btn sm',onclick:()=>{ let k=1; while(knownName('p'+k)) k++; M.vars.push(mkVar('p'+k,1,'')); clearF(); renderVars(); updateNameList(); fillSweepSel(); }},'+ 상수 추가'),
+      h('button',{class:'btn sm',onclick:()=>{ let k=1; while(knownName('f'+k)) k++; const v=mkVar('f'+k,1,''); v.kind='func'; v.expr='1'; M.vars.push(v); clearF(); renderVars(); updateNameList(); fillSweepSel(); }},'+ 식 변수 추가'),
+      h('button',{class:'btn sm',onclick:()=>{
+        const u=usedNames(); const before=M.vars.length;
+        M.vars=M.vars.filter(v=>u.has(v.name)||(M.sweep.on&&M.sweep.name===v.name));
+        renderVars(); updateNameList(); fillSweepSel(); toast((before-M.vars.length)+'개 정리했습니다');
+      }},'안 쓰는 변수 정리'))));
+  root.append(h('p',{class:'hint'},'슬라이더를 움직이면 오른쪽 결과가 바로 바뀝니다. 색 표시는 그 값의 근거(문헌·보정·계산·가정)입니다.'));
+  const q=h('input',{type:'search',value:S.varQ,placeholder:'이름이나 출처로 찾기 (예: Kp, Coggins)','aria-label':'변수 검색'});
+  const f=h('select',{'aria-label':'변수 거르기'},[['','전체'],['param','상수만'],['func','식 변수만'],['문헌','문헌'],['보정','보정'],['계산','계산'],['가정','가정'],['예시','예시']].map(([v,l])=>h('option',{value:v},l)));
+  f.value=S.varF;
+  const cnt=h('span',{class:'muted',style:'font-size:12px'});
+  const list=h('div',{});
+  const fill=()=>{
+    const used=usedNames(); const qq=S.varQ.trim().toLowerCase(); list.replaceChildren(); let n=0;
+    M.vars.forEach(v=>{
+      if(S.varF==='param'||S.varF==='func'){ if(v.kind!==S.varF) return; } else if(S.varF&&v.tag!==S.varF) return;
+      if(qq&&![v.name,v.note||'',v.unit||'',v.latex||''].some(x=>x.toLowerCase().includes(qq))) return;
+      list.append(varCard(v,used.has(v.name))); n++;
+    });
+    cnt.textContent=n+' / '+M.vars.length+'개 표시';
+    if(!n) list.append(h('p',{class:'muted',style:'margin:0'},'조건에 맞는 변수가 없습니다. 검색어나 거르기를 바꿔 보세요.'));
+  };
+  q.addEventListener('input',()=>{ S.varQ=q.value; fill(); });
+  f.addEventListener('change',()=>{ S.varF=f.value; fill(); });
+  root.append(h('div',{class:'filterbar'},q,f,cnt),list);
+  fill();
+  updateNameList();
+  attachHelp(root,'var');
+}
+
+/* ================= 시뮬레이션 UI ================= */
+let sweepSel=null;
+function fillSweepSel(){
+  if(!sweepSel) return;
+  const ps=M.vars.filter(v=>v.kind==='param');
+  sweepSel.replaceChildren(...ps.map(v=>h('option',{value:v.name},v.name)));
+  if(ps.length){ if(!ps.some(v=>v.name===M.sweep.name)) M.sweep.name=ps[0].name; sweepSel.value=M.sweep.name; }
+}
+function renderSim(){
+  const root=$('#simCard'); root.replaceChildren();
+  root.append(h('div',{class:'card-h'},h('h2',{},'시뮬레이션')));
+  const nf=(label,get,set,w)=>{
+    const i=h('input',{type:'number',step:'any',value:get(),style:w?'width:'+w+'px':null});
+    i.addEventListener('input',()=>{ const v=parseFloat(i.value); if(Number.isFinite(v)){ set(v); scheduleRun(); } });
+    return h('label',{class:'fld'},h('span',{},label),i);
+  };
+  const tu=h('input',{class:'w-s',value:M.sim.tunit,'aria-label':'시간 단위'});
+  tu.addEventListener('input',()=>{ M.sim.tunit=tu.value; renderMetrics(); drawPlot(); save(); });
+  root.append(h('div',{class:'row',style:'align-items:flex-end'},
+    nf('시작 시간',()=>M.sim.t0,v=>{M.sim.t0=v;},96),nf('종료 시간',()=>M.sim.tEnd,v=>{M.sim.tEnd=v;},96),
+    h('label',{class:'fld'},h('span',{},'시간 단위'),tu),
+    nf('상대 허용오차',()=>M.sim.rtol,v=>{M.sim.rtol=v;},96)));
+  const swOn=h('input',{type:'checkbox',checked:M.sweep.on});
+  sweepSel=h('select',{'aria-label':'스윕할 변수'});
+  const stSel=h('select',{'aria-label':'표시할 상태'},M.eqs.map(q=>h('option',{value:q.state},q.state)));
+  const setFromVar=()=>{
+    const v=M.vars.find(x=>x.name===M.sweep.name); if(!v) return;
+    M.sweep.from=v.min>0||!M.sweep.log?v.min:v.value/10; M.sweep.to=v.max;
+    if(M.sweep.log&&M.sweep.from<=0) M.sweep.from=v.value/10;
+  };
+  swOn.addEventListener('change',()=>{ M.sweep.on=swOn.checked; sweepBox.hidden=!swOn.checked; scheduleRun(); });
+  const sweepBox=h('div',{class:'sweeprow',hidden:!M.sweep.on});
+  fillSweepSel();
+  sweepSel.addEventListener('change',()=>{ M.sweep.name=sweepSel.value; setFromVar(); renderSim(); scheduleRun(); });
+  if(!M.eqs.some(q=>q.state===M.sweep.show)) M.sweep.show=M.eqs[0].state;
+  stSel.value=M.sweep.show;
+  stSel.addEventListener('change',()=>{ M.sweep.show=stSel.value; scheduleRun(); });
+  const sn=(label,get,set)=>{
+    const i=h('input',{type:'number',step:'any',value:get()});
+    i.addEventListener('input',()=>{ const v=parseFloat(i.value); if(Number.isFinite(v)){ set(v); scheduleRun(); } });
+    return h('label',{class:'fld'},h('span',{},label),i);
+  };
+  const lg=h('input',{type:'checkbox',checked:M.sweep.log});
+  lg.addEventListener('change',()=>{ M.sweep.log=lg.checked; if(lg.checked&&!(M.sweep.from>0)){ const v=findVar(M.sweep.name); M.sweep.from=v?Math.max(v.value/10,1e-6):1e-3; renderSim(); } scheduleRun(); });
+  sweepBox.append(h('label',{class:'fld'},h('span',{},'변수'),sweepSel),sn('시작값',()=>M.sweep.from,v=>{M.sweep.from=v;}),sn('끝값',()=>M.sweep.to,v=>{M.sweep.to=v;}),
+    sn('곡선 수 (2–12)',()=>M.sweep.n,v=>{M.sweep.n=v;}),h('label',{class:'fld'},h('span',{},'표시 상태'),stSel),h('label',{class:'chk',style:'padding-bottom:6px'},lg,'로그 간격'));
+  root.append(h('div',{class:'tools',style:'margin-top:12px'},
+    h('label',{class:'chk',style:'font-size:13.5px;color:var(--text)'},swOn,h('b',{},'변수 스윕'),h('span',{class:'muted'},' · 한 변수를 여러 값으로 바꿔 곡선을 겹쳐 봅니다')),sweepBox));
+  attachHelp(root,'sim');
+}
+
+/* ================= 대화상자 / 내보내기 ================= */
+let dlgApply=null;
+function openDialog(title,text,opt){
+  opt=opt||{};
+  $('#dlgTitle').textContent=title; $('#dlgHint').textContent=opt.hint||'';
+  const ta=$('#dlgText'); ta.value=text; ta.readOnly=!opt.onApply;
+  dlgApply=opt.onApply||null; $('#dlgApply').hidden=!opt.onApply;
+  $('#overlay').hidden=false; ta.focus(); if(!opt.onApply) ta.select();
+}
+function closeDialog(){ $('#overlay').hidden=true; dlgApply=null; }
+
+function genPython(){
+  const C=compile();
+  if(C.errors.length) return '# 식에 오류가 있어 코드를 만들 수 없습니다\n# '+C.errors.join('\n# ');
+  const KW=new Set(['False','None','True','and','as','assert','async','await','break','class','continue','def','del','elif','else','except','finally','for','from','global','if','import','in','is','lambda','nonlocal','not','or','pass','raise','return','try','while','with','yield','np','solve_ivp','plt','sol','rhs','caps','y','k','events','apply']);
+  const pn=n=>KW.has(n)?n+'_':n;
+  const PYF={exp:'np.exp',ln:'np.log',log10:'np.log10',sqrt:'np.sqrt',abs:'abs',sin:'np.sin',cos:'np.cos',tan:'np.tan',tanh:'np.tanh',floor:'np.floor',ceil:'np.ceil',mod:'np.mod'};
+  const o={pow:'**',v:n=>n==='t'?'t':n==='pi'?'np.pi':pn(n),fn:(name,args)=>{
+    if(name==='step') return '(1.0 if ('+args[0]+') >= 0 else 0.0)';
+    if(name==='min'||name==='max') return name+'('+args.join(', ')+')';
+    return PYF[name]+'('+args.join(', ')+')';
+  }};
+  const px=a=>toText(a,0,o);
+  const funcVars=new Map(); M.vars.forEach(v=>{ if(v.kind==='func') funcVars.set(v.name,parse(v.expr)); });
+  const order=[],mark=new Set();
+  const visit=n=>{ if(mark.has(n)) return; mark.add(n); collectVars(funcVars.get(n)).forEach(d=>{ if(funcVars.has(d)) visit(d); }); order.push(n); };
+  funcVars.forEach((_,n)=>visit(n));
+  const states=stateNames();
+  const unpack='    '+states.map(pn).join(', ')+(states.length===1?',':'')+' = y';
+  const fv=()=>order.map(n=>'    '+pn(n)+' = '+px(funcVars.get(n)));
+  const doses=M.doses.filter(d=>d.on&&M.eqs.some(q=>q.state===d.target));
+  const L=['import numpy as np','from scipy.integrate import solve_ivp','import matplotlib.pyplot as plt','','# ── 상수 ──'];
+  M.vars.filter(v=>v.kind==='param').forEach(v=>L.push(pn(v.name)+' = '+v.value+(v.unit?'   # '+v.unit:'')));
+  L.push('','# ── 미분방정식: y = ['+states.join(', ')+'] ──','def rhs(t, y):',unpack,...fv());
+  M.eqs.forEach(q=>{
+    const parts=q.terms.filter(tm=>tm.on).map(tm=>(tm.sign<0?'- ':'+ ')+'('+px(parse(tm.expr))+')');
+    L.push('    d_'+pn(q.state)+' = ('+(parts.join(' ')||'0.0')+') / ('+px(parse(q.cap||'1'))+')');
+  });
+  L.push('    return ['+states.map(s=>'d_'+pn(s)).join(', ')+']','');
+  L.push('t0, t1 = '+M.sim.t0+', '+M.sim.tEnd+'   # '+(M.sim.tunit||''));
+  L.push('y0 = ['+M.eqs.map(q=>q.ic).join(', ')+']');
+  if(!doses.length){
+    L.push('sol = solve_ivp(rhs, (t0, t1), y0, method="LSODA", rtol=1e-8, atol=1e-10, dense_output=True)','');
+    states.forEach((s,i)=>L.push('plt.plot(sol.t, sol.y['+i+'], label="'+s+'")'));
+  }else{
+    L.push('','# ── 투약: 좌변 계수 (투약량을 계수로 나눠 상태에 더함) ──','def caps(t, y):',unpack,...fv(),'    return ['+M.eqs.map(q=>'('+px(parse(q.cap||'1'))+')').join(', ')+']');
+    L.push('','# ── 투약 이벤트 (시각, 상태 번호, 양) ──','def make_events():','    t = 0.0; y = [0.0]*'+states.length,unpack,...fv(),'    ev = []');
+    doses.forEach(d=>{
+      L.push('    for k in range(int(round('+px(parse(d.n))+'))):','        ev.append(('+px(parse(d.start))+' + k*('+px(parse(d.tau))+'), '+states.indexOf(d.target)+', '+px(parse(d.amt))+'))');
+    });
+    L.push('    return ev','');
+    L.push('ev = sorted([e for e in make_events() if t0 <= e[0] <= t1], key=lambda e: e[0])');
+    L.push('times = sorted(set([t0, t1] + [e[0] for e in ev]))');
+    L.push('y = np.array(y0, dtype=float)','T_all = [t0]; Y_all = [y.copy()]','');
+    L.push('def apply(te):','    hit = False','    for te_, i, amt in ev:','        if te_ == te:','            y[i] += amt / caps(te, y)[i]; hit = True','    if hit:','        T_all.append(te); Y_all.append(y.copy())','');
+    L.push('apply(t0)','for a, b in zip(times[:-1], times[1:]):','    sol = solve_ivp(rhs, (a, b), y, method="LSODA", rtol=1e-8, atol=1e-10)','    T_all.extend(sol.t[1:]); Y_all.extend(sol.y[:, 1:].T)','    y = sol.y[:, -1].copy()','    apply(b)','');
+    L.push('T_all = np.array(T_all); Y_all = np.array(Y_all)');
+    states.forEach((s,i)=>L.push('plt.plot(T_all, Y_all[:, '+i+'], label="'+s+'")'));
+  }
+  L.push('plt.xlabel("t ['+(M.sim.tunit||'')+']"); plt.legend(); plt.grid(alpha=.3); plt.show()');
+  return L.join('\n');
+}
+function genCsv(){
+  const R=S.result; if(!R) return '결과가 없습니다. 식 오류를 먼저 고쳐 주세요.';
+  const rows=[['t'].concat(stateNames()).join(',')];
+  const N=200;
+  for(let k=0;k<=N;k++){
+    const t=M.sim.t0+(M.sim.tEnd-M.sim.t0)*k/N;
+    rows.push([t].concat(M.eqs.map((q,i)=>interp(R.main.T,R.main.Y,i,t))).join(','));
+  }
+  return rows.join('\n');
+}
+
+/* ================= 프리셋 ================= */
+const PV=(name,latex,value,min,max,unit)=>({name,latex,kind:'param',value,min,max,unit,log:false,expr:String(value)});
+const FV=(name,latex,expr,unit)=>({name,latex,kind:'func',value:0,min:0,max:1,unit,log:false,expr});
+const T_=(sign,expr)=>({sign,on:true,expr});
+const ORG=[['h',3.3,4.3],['k',0.7,8.4],['lu',0.8,3.6],['he',0.5,6.7],['mu',49.9,13.0],['re',29.4,29.8]];
+const MB_REF='F*Dmg*n_d';
+const ANALYTIC=(V,k)=>'ka*F*Dmg/('+V+'*(ka-'+k+'))*((1-exp(-n_d*'+k+'*tau))/(1-exp(-'+k+'*tau))*exp(-'+k+'*tp) - (1-exp(-n_d*ka*tau))/(1-exp(-ka*tau))*exp(-ka*tp))';
+const DOSE_VARS=()=>[PV('BW','BW',3.5,1,8,'kg'),PV('Dose_mgkg','Dose',12,0,40,'mg/kg'),PV('F','F',1.0,0,1,'-'),PV('ka','k_a',1.0,0.02,5,'1/h'),PV('tau','\\tau',24,4,48,'h'),PV('N_d','N',7,1,28,'회')];
+const DOSE_FUNCS=()=>[FV('Dmg','D','Dose_mgkg*BW','mg'),FV('n_d','n(t)','min(N_d, floor(t/tau + 1e-9) + 1)','회'),FV('tp',"t'",'t - (n_d - 1)*tau','h')];
+function presetStage2(){
+  return normalize({
+    vars:[...DOSE_VARS(),PV('Vc_kg','V_{b,kg}',2.4,0.5,8,'L/kg'),PV('Vpct_h','V_{\\%,h}',3.3,0.5,10,'%BW'),PV('Qh_kg','Q_{h,kg}',0.63,0.1,3,'L/h/kg'),
+      PV('Kp_h','K_{p,h}',2.6,0.2,10,'-'),PV('CLi_kg','CL_{int,kg}',1.1,0.05,3,'L/h/kg'),
+      ...DOSE_FUNCS(),FV('V_b','V_b','Vc_kg*BW','L'),FV('V_h','V_h','BW*Vpct_h/100','L'),FV('Q_h','Q_h','Qh_kg*BW','L/h'),FV('CL_int','CL_{int}','CLi_kg*BW','L/h'),
+      FV('V_eff','V_{eff}','V_b + Kp_h*V_h','L'),FV('CL_Hs','CL_{H}','Q_h*CL_int/(Q_h + CL_int)','L/h'),FV('ke','k_e','CL_Hs/V_eff','1/h')],
+    eqs:[
+      {state:'A_gut',latex:'A_{gut}',cap:'1',ic:0,unit:'mg',terms:[T_(-1,'ka*A_gut')]},
+      {state:'C_b',latex:'C_b',cap:'V_b',ic:0,unit:'mg/L',terms:[T_(1,'ka*A_gut'),T_(1,'Q_h*(C_h/Kp_h - C_b)')]},
+      {state:'C_h',latex:'C_h',cap:'V_h',ic:0,unit:'mg/L',terms:[T_(1,'Q_h*(C_b - C_h/Kp_h)'),T_(-1,'CL_int*(C_h/Kp_h)')]},
+      {state:'A_el',latex:'A_{el}',cap:'1',ic:0,unit:'mg',terms:[T_(1,'CL_int*(C_h/Kp_h)')]}
+    ],
+    doses:[{on:true,label:'경구 투여',target:'A_gut',amt:'F*Dmg',start:'0',tau:'tau',n:'N_d'}],
+    cmps:[
+      {on:true,label:'질량 보존 (총량 vs 누적 투여)',sim:'A_gut + V_b*C_b + V_h*C_h + A_el',kind:'ref',ref:MB_REF,data:''},
+      {on:true,label:'1구획 근사 해석해 (V_eff)',sim:'C_b',kind:'ref',ref:ANALYTIC('V_eff','ke'),data:''}
+    ],
+    sim:{t0:0,tEnd:192,tunit:'h',rtol:1e-9},
+    sweep:{on:false,name:'Kp_h',from:0.5,to:10,n:6,log:true,show:'C_b'},
+    opts:{cdot:true,breakTerms:false,logY:false}
+  });
+}
+function presetModel1(){
+  const vars=[...DOSE_VARS(),PV('Dose_IV','Dose_{IV}',6.9,0,20,'mg/kg'),PV('CO_kg','CO',9.6,3,20,'L/h/kg'),PV('Vpct_b','V_{\\%,b}',5,1,10,'%BW'),
+    PV('CLh_kg','CL_{h}',0.3,0,3,'L/h/kg'),PV('CLr_kg','CL_{r}',0.24,0,3,'L/h/kg'),PV('PS_kg','PS_{a}',0.05,0,1,'L/h/kg'),
+    PV('Vasc_kg','V_{asc}',0.03,0.005,0.1,'L/kg'),PV('Kp_a','K_{p,a}',1,0.2,5,'-')];
+  ORG.forEach(o=>{ const k=o[0]; vars.push(PV('Vpct_'+k,'V_{\\%,'+k+'}',o[1],0,60,'%BW'),PV('Qpct_'+k,'Q_{\\%,'+k+'}',o[2],0,40,'%CO'),PV('Kp_'+k,'K_{p,'+k+'}',2.6,0.2,10,'-')); });
+  const funcs=[...DOSE_FUNCS(),FV('Qsum','Q_{\\Sigma\\%}',ORG.map(o=>'Qpct_'+o[0]).join(' + '),'%CO'),
+    FV('V_b','V_b','BW*Vpct_b/100','L'),FV('V_asc','V_{asc}','Vasc_kg*BW','L'),FV('PS_a','PS_a','PS_kg*BW','L/h'),
+    FV('CL_int','CL_{int}','CLh_kg*BW','L/h'),FV('CL_r','CL_r','CLr_kg*BW','L/h')];
+  ORG.forEach(o=>{ const k=o[0]; funcs.push(FV('V_'+k,'V_{'+k+'}','BW*Vpct_'+k+'/100','L'),FV('Q_'+k,'Q_{'+k+'}','CO_kg*BW*Qpct_'+k+'/Qsum','L/h')); });
+  funcs.push(FV('V_eff','V_{eff}','V_b + '+ORG.map(o=>'Kp_'+o[0]+'*V_'+o[0]).join(' + '),'L'),FV('CL_Hs','CL_{H}','Q_h*CL_int/(Q_h + CL_int)','L/h'),FV('CL_Rs','CL_{R}','Q_k*CL_r/(Q_k + CL_r)','L/h'),FV('ke','k_e','(CL_Hs + CL_Rs)/V_eff','1/h'));
+  const eqs=[{state:'A_gut',latex:'A_{gut}',cap:'1',ic:0,unit:'mg',terms:[T_(-1,'ka*A_gut')]}];
+  eqs.push({state:'C_b',latex:'C_b',cap:'V_b',ic:0,unit:'mg/L',
+    terms:[T_(1,'ka*A_gut'),...ORG.map(o=>T_(1,'Q_'+o[0]+'*(C_'+o[0]+'/Kp_'+o[0]+' - C_b)')),T_(1,'PS_a*(C_asc/Kp_a - C_b)')]});
+  ORG.forEach(o=>{ const k=o[0]; const t=[T_(1,'Q_'+k+'*(C_b - C_'+k+'/Kp_'+k+')')];
+    if(k==='h') t.push(T_(-1,'CL_int*(C_h/Kp_h)')); if(k==='k') t.push(T_(-1,'CL_r*(C_k/Kp_k)'));
+    eqs.push({state:'C_'+k,latex:'C_{'+k+'}',cap:'V_'+k,ic:0,unit:'mg/L',terms:t}); });
+  eqs.push({state:'C_asc',latex:'C_{asc}',cap:'V_asc',ic:0,unit:'mg/L',terms:[T_(1,'PS_a*(C_b - C_asc/Kp_a)')]});
+  eqs.push({state:'A_el',latex:'A_{el}',cap:'1',ic:0,unit:'mg',terms:[T_(1,'CL_int*(C_h/Kp_h)'),T_(1,'CL_r*(C_k/Kp_k)')]});
+  return normalize({
+    vars:[...vars,...funcs],eqs,
+    doses:[
+      {on:true,label:'경구 투여 (기본)',target:'A_gut',amt:'F*Dmg',start:'0',tau:'tau',n:'N_d'},
+      {on:false,label:'IV 1회 (켜려면 경구 투여를 끄세요)',target:'C_b',amt:'Dose_IV*BW',start:'0',tau:'24',n:'1'}],
+    cmps:[
+      {on:true,label:'질량 보존 (경구 전용)',sim:'A_gut + V_b*C_b + '+ORG.map(o=>'V_'+o[0]+'*C_'+o[0]).join(' + ')+' + V_asc*C_asc + A_el',kind:'ref',ref:MB_REF,data:''},
+      {on:true,label:'참고: 1구획 근사 해석해',sim:'C_b',kind:'ref',ref:ANALYTIC('V_eff','ke'),data:''},
+      {on:false,label:'Coggins 2025 요약점 (IV, ng/mL)',sim:'1000*C_b',kind:'data',ref:'',data:'1, 2632\n24, 100'}],
+    exps:[{on:true,label:'마지막 투약 간격 (µM)',expr:'C_b',scale:'1000/291.3',t0:'(N_d-1)*tau',t1:'N_d*tau',thr:'3, 10'},
+      {on:false,label:'IV AUC0–24 (ng·h/mL, 관측 AUC0–tlast 17,391)',expr:'C_b',scale:'1000',t0:'0',t1:'24',thr:''}],
+    sim:{t0:0,tEnd:192,tunit:'h',rtol:1e-7},
+    sweep:{on:false,name:'Kp_mu',from:0.5,to:10,n:6,log:true,show:'C_b'},
+    opts:{cdot:true,breakTerms:true,logY:false}
+  });
+}
+function setV(m,name,val){ const v=m.vars.find(x=>x.name===name); v.value=val; v.expr=String(val); if(val>v.max) v.max=val*2; if(val<v.min) v.min=0; }
+function presetIV2c(){
+  return normalize({
+    vars:[PV('BW','BW',3.53,1,8,'kg'),PV('Dose_IV','Dose_{IV}',6.88,0,20,'mg/kg'),PV('CL_kg','CL_{kg}',0.40,0.1,1.2,'L/h/kg'),
+      PV('V1_kg','V_{1,kg}',2.4,0.5,8,'L/kg'),PV('Q_kg','Q_{kg}',0.17,0.01,1,'L/h/kg'),PV('V2_kg','V_{2,kg}',1.2,0.1,10,'L/kg'),
+      FV('Dmg_iv','D_{IV}','Dose_IV*BW','mg'),FV('CL','CL','CL_kg*BW','L/h'),FV('V_1','V_1','V1_kg*BW','L'),FV('V_2','V_2','V2_kg*BW','L'),FV('Q_ic','Q','Q_kg*BW','L/h'),
+      FV('k10','k_{10}','CL/V_1','1/h'),FV('k12','k_{12}','Q_ic/V_1','1/h'),FV('k21','k_{21}','Q_ic/V_2','1/h'),FV('sg','\\sigma','k10 + k12 + k21','1/h'),
+      FV('al','\\alpha','(sg + sqrt(sg^2 - 4*k10*k21))/2','1/h'),FV('be','\\beta','(sg - sqrt(sg^2 - 4*k10*k21))/2','1/h')],
+    eqs:[
+      {state:'A_1',latex:'A_1',cap:'1',ic:0,unit:'mg',terms:[T_(-1,'CL*(A_1/V_1)'),T_(-1,'Q_ic*(A_1/V_1)'),T_(1,'Q_ic*(A_2/V_2)')]},
+      {state:'A_2',latex:'A_2',cap:'1',ic:0,unit:'mg',terms:[T_(1,'Q_ic*(A_1/V_1)'),T_(-1,'Q_ic*(A_2/V_2)')]}],
+    doses:[{on:true,label:'IV 1회 (15 mg/kg remdesivir → GS-441524 6.88 mg/kg)',target:'A_1',amt:'Dmg_iv',start:'0',tau:'24',n:'1'}],
+    cmps:[
+      {on:true,label:'2구획 해석해 (투여 코드 검증)',sim:'A_1/V_1',kind:'ref',ref:'Dmg_iv/V_1*((al - k21)/(al - be)*exp(-al*t) + (k21 - be)/(al - be)*exp(-be*t))',data:''},
+      {on:true,label:'Coggins 2025 요약점 (ng/mL)',sim:'1000*A_1/V_1',kind:'data',ref:'',data:'1, 2632\n24, 100'}],
+    exps:[{on:true,label:'AUC0–24 (ng·h/mL; 관측 AUC0–tlast 17,391)',expr:'A_1/V_1',scale:'1000',t0:'0',t1:'24',thr:''}],
+    sim:{t0:0,tEnd:24,tunit:'h',rtol:1e-9},
+    sweep:{on:false,name:'V2_kg',from:0.5,to:10,n:6,log:true,show:'A_1'},
+    opts:{cdot:true,breakTerms:false,logY:true}
+  });
+}
+function presetCook(){
+  const m=presetStage1();
+  setV(m,'CL_kg',0.257); setV(m,'Vc_kg',1.93); setV(m,'Dose_mgkg',25); setV(m,'N_d',1); setV(m,'F',1.0); setV(m,'ka',1.03);
+  m.doses[0].label='경구 GS-441524 25 mg/kg 1회 (Cook 2022)';
+  m.cmps.push({on:true,label:'Cook 2022 C24 (µM)',sim:'1000/291.3*A_c/V_c',kind:'data',ref:'',data:'24, 2.3'});
+  m.exps=[{on:true,label:'0–24 h µM (관측: AUC 308 µM·h · Cmax 35 µM · Tmax 3–8 h)',expr:'A_c/V_c',scale:'1000/291.3',t0:'0',t1:'24',thr:''}];
+  m.sim.tEnd=48;
+  return m;
+}
+function presetCase1(){
+  const m=presetModel1();
+  setV(m,'BW',2.3);
+  m.vars.push(PV('Dose1','D_1',2,0,10,'mg/kg'),PV('Dose2','D_2',4,0,20,'mg/kg'),PV('N1','N_1',20,1,60,'회'),PV('N2','N_2',14,1,90,'회'));
+  m.doses=[
+    {on:true,label:'증례 1: 2 mg/kg 하루 1회',target:'A_gut',amt:'F*Dose1*BW',start:'0',tau:'tau',n:'N1'},
+    {on:true,label:'증례 1: 20일째부터 4 mg/kg',target:'A_gut',amt:'F*Dose2*BW',start:'N1*tau',tau:'tau',n:'N2'}];
+  m.cmps=[m.cmps[0]];
+  m.cmps[0].label='질량 보존 (두 단계 누적 투여)';
+  m.cmps[0].ref='F*BW*(Dose1*min(N1, floor(t/tau + 1e-9) + 1) + Dose2*max(0, min(N2, floor((t - N1*tau)/tau + 1e-9) + 1)))';
+  m.exps=[
+    {on:true,label:'2 mg/kg 마지막 간격 (µM)',expr:'C_b',scale:'1000/291.3',t0:'(N1-1)*tau',t1:'N1*tau',thr:'3, 10'},
+    {on:true,label:'4 mg/kg 마지막 간격 (µM)',expr:'C_b',scale:'1000/291.3',t0:'(N1+N2-1)*tau',t1:'(N1+N2)*tau',thr:'3, 10'}];
+  m.sim.tEnd=816;
+  return m;
+}
+function presetStage1(){
+  const P=(name,latex,value,min,max,unit)=>({name,latex,kind:'param',value,min,max,unit,log:false,expr:String(value)});
+  const F=(name,latex,expr,unit)=>({name,latex,kind:'func',value:0,min:0,max:1,unit,log:false,expr});
+  return normalize({
+    vars:[
+      P('BW','BW',3.5,1,8,'kg'),P('Dose_mgkg','Dose',12,0,30,'mg/kg'),P('F','F',1.0,0,1,'-'),
+      P('ka','k_a',1.0,0.02,5,'1/h'),P('CL_kg','CL_{kg}',0.4,0.1,1.2,'L/h/kg'),P('Vc_kg','V_{c,kg}',2.4,0.5,8,'L/kg'),
+      P('tau','\\tau',24,4,48,'h'),P('N_d','N',7,1,28,'회'),
+      F('Dmg','D','Dose_mgkg*BW','mg'),F('CL','CL','CL_kg*BW','L/h'),F('V_c','V_c','Vc_kg*BW','L'),F('ke','k_e','CL/V_c','1/h'),
+      F('n_d','n(t)','min(N_d, floor(t/tau + 1e-9) + 1)','회'),F('tp',"t'",'t - (n_d - 1)*tau','h')
+    ],
+    eqs:[
+      {state:'A_gut',latex:'A_{gut}',cap:'1',ic:0,unit:'mg',terms:[{sign:-1,on:true,expr:'ka*A_gut'}]},
+      {state:'A_c',latex:'A_c',cap:'1',ic:0,unit:'mg',terms:[{sign:1,on:true,expr:'ka*A_gut'},{sign:-1,on:true,expr:'ke*A_c'}]}
+    ],
+    doses:[{on:true,label:'경구 투여',target:'A_gut',amt:'F*Dmg',start:'0',tau:'tau',n:'N_d'}],
+    cmps:[{on:true,label:'1구획 다회 투여 해석해 (C_p)',sim:'A_c/V_c',kind:'ref',data:'',
+      ref:'ka*F*Dmg/(V_c*(ka-ke))*((1-exp(-n_d*ke*tau))/(1-exp(-ke*tau))*exp(-ke*tp) - (1-exp(-n_d*ka*tau))/(1-exp(-ka*tau))*exp(-ka*tp))'}],
+    sim:{t0:0,tEnd:192,tunit:'h',rtol:1e-9},
+    sweep:{on:false,name:'ka',from:0.05,to:2,n:6,log:true,show:'A_c'},
+    opts:{cdot:true,breakTerms:false,logY:false}
+  });
+}
+
+/* ================= 초기화 & 이벤트 ================= */
+function renderAll(){ renderEqs(); renderDoses(); renderVars(); renderCmp(); renderExps(); renderSim(); renderEqView(); renderInfo(); run(); }
+
+function bind(){
+  $('#optCdot').checked=!!M.opts.cdot; $('#optBreak').checked=!!M.opts.breakTerms; $('#optLog').checked=!!M.opts.logY;
+  $('#optCdot').addEventListener('change',e=>{ M.opts.cdot=e.target.checked; renderEqView(); rerenderTermsLater(); save(); });
+  $('#optBreak').addEventListener('change',e=>{ M.opts.breakTerms=e.target.checked; renderEqView(); save(); });
+  $('#optLog').addEventListener('change',e=>{ M.opts.logY=e.target.checked; drawPlot(); save(); });
+  $('#btnCopyTex').addEventListener('click',()=>copyText(S.tex||buildTex()));
+  $('#presetSel').addEventListener('change',e=>{ const v=e.target.value; e.target.value=''; if(v) loadPreset(v); });
+  $('#btnPy').addEventListener('click',()=>openDialog('Python 코드 (SciPy)',genPython(),{hint:'numpy · scipy · matplotlib이 설치된 환경에서 그대로 실행됩니다.'}));
+  $('#btnCsv').addEventListener('click',()=>openDialog('시뮬레이션 데이터 (CSV)',genCsv(),{hint:'현재 상수 값 기준, 시간 200등분 결과입니다. 복사해서 스프레드시트에 붙여 넣으세요.'}));
+  $('#btnExport').addEventListener('click',()=>openDialog('모델 내보내기 (JSON)',JSON.stringify(M,null,2),{hint:'복사해서 보관하세요. 나중에 “모델 불러오기”에 붙여 넣으면 그대로 복원됩니다.'}));
+  $('#btnImport').addEventListener('click',()=>openDialog('모델 불러오기','',{hint:'내보낸 JSON을 붙여 넣고 적용하세요.',onApply:()=>{
+    try{ const o=JSON.parse($('#dlgText').value); M=normalize(o); S.hidden.clear(); closeDialog(); renderAll(); toast('모델을 불러왔습니다'); }
+    catch(e){ toast('JSON을 읽을 수 없습니다: '+e.message); }
+  }}));
+  let resetArm=0;
+  $('#btnReset').addEventListener('click',e=>{
+    const b=e.currentTarget;
+    if(!resetArm){ resetArm=setTimeout(()=>{ resetArm=0; b.textContent='처음 식으로 초기화'; },3000); b.textContent='한 번 더 누르면 초기화'; return; }
+    clearTimeout(resetArm); resetArm=0; b.textContent='처음 식으로 초기화';
+    M=defaultModel(); S.hidden.clear(); renderAll(); toast('처음 식으로 되돌렸습니다');
+  });
+  $('#btnHelp').addEventListener('click',openHelp);
+  $('#helpClose').addEventListener('click',closeHelp);
+  $('#helpOverlay').addEventListener('mousedown',e=>{ if(e.target.id==='helpOverlay') closeHelp(); });
+  const WKEY='ode-builder-welcome-v1';
+  let seen=false; try{ seen=!!localStorage.getItem(WKEY); }catch(e){}
+  const hideW=()=>{ $('#welcome').hidden=true; try{ localStorage.setItem(WKEY,'1'); }catch(e){} };
+  $('#welcome').hidden=seen;
+  $('#wClose').addEventListener('click',hideW);
+  $('#wHelp').addEventListener('click',()=>{ hideW(); openHelp(); });
+  $('#wStart').addEventListener('click',()=>{ hideW(); loadPreset('s1'); });
+  attachHelp($('#eqView').closest('.card'),'tex');
+  attachHelp($('#plot').closest('.card'),'plot');
+  attachHelp($('#metrics').closest('.card'),'metrics');
+  $('#dlgClose').addEventListener('click',closeDialog);
+  $('#dlgCopy').addEventListener('click',()=>copyText($('#dlgText').value));
+  $('#dlgApply').addEventListener('click',()=>{ if(dlgApply) dlgApply(); });
+  $('#overlay').addEventListener('mousedown',e=>{ if(e.target.id==='overlay') closeDialog(); });
+  document.addEventListener('keydown',e=>{ if(e.key!=='Escape') return; if(!$('#helpOverlay').hidden) closeHelp(); else if(!$('#overlay').hidden) closeDialog(); });
+
+  const cv=$('#plot');
+  const move=e=>{
+    if(!S.layout) return;
+    const r=cv.getBoundingClientRect(); const x=e.clientX-r.left; const {L,pw,xmin,xmax}=S.layout;
+    if(x<L||x>L+pw){ S.hover=null; } else S.hover=xmin+(x-L)/pw*(xmax-xmin);
+    drawPlot();
+  };
+  cv.addEventListener('pointermove',move); cv.addEventListener('pointerdown',move);
+  cv.addEventListener('pointerleave',()=>{ S.hover=null; drawPlot(); });
+  if(window.ResizeObserver) new ResizeObserver(()=>drawPlot()).observe(cv); else window.addEventListener('resize',drawPlot);
+  new MutationObserver(drawPlot).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+  if(window.matchMedia) try{ window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',drawPlot); }catch(e){}
+}
+
+return {
+  setM:x=>{M=x;}, getM:()=>M, num, fmt, parse, toText, toTex, autoLatex, labelOf, buildTex, genPython,
+  compile, makeEvents, integrate, integrateEvents, interp, interp1, windowStats, computeCmp, computeExps,
+  normalize, applyMeta, PV, FV, T_, ORG, DOSE_VARS, DOSE_FUNCS,
+  presets:{m0:defaultModel,s1:presetStage1,s2:presetStage2,m1:presetModel1,iv:presetIV2c,ck:presetCook,c1:presetCase1}
+};
+})();

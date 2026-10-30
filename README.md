@@ -13,6 +13,16 @@
 - `index.html` 한 파일로 동작합니다 (HTML·CSS·JS 포함).
 - 수식 렌더링은 MathJax 3 (cdnjs)를 불러옵니다. 오프라인에서는 LaTeX 원문으로 표시됩니다.
 
+## 챕터 2 · 장 상태 시나리오 (`chapter2/`)
+챕터 1(모델 0 ~ 6단계)과 별개의 탐구 모델입니다. 몸 식은 챕터 1의 3단계 모델 1을 그대로 쓰고, 장관만 내강 → 장 세포 → 혈액(입구 k_in, 출구 k_out, 혈액 유입 k_b, 대변 통과 k_tr) 3구획으로 바꿨습니다. F는 입력이 아니라 결과값입니다.
+- `chapter2/engine.gen.js`는 `index.html`의 계산 코드를 자동 추출한 파일입니다. 직접 고치지 말고 `index.html`을 고친 뒤 `node tools/build-engine.mjs`로 다시 만드세요.
+- 페이지가 스크립트 파일을 불러오므로 로컬에서는 정적 서버로 여세요 (예: `python -m http.server`).
+
+## 검증
+- `node tests/baseline.mjs` — 챕터 1 모든 단계의 지표가 `tests/baseline.json` 기록과 같은지 (회귀)
+- `node tests/chapter2.mjs` — 챕터 2 해석해·F 닫힌 식·질량 보존·보정·엔진 추출본 최신 여부
+- `node tests/chapter2_scipy.mjs` — 챕터 2 모델을 scipy로 풀어 대조 (numpy, scipy 필요)
+
 ## 주의
 모델 파라미터 일부는 문헌 값이고 일부는 가정입니다. 페이지의 변수 카드에서 근거 표시(문헌·보정·계산·가정)를 확인하세요.
 연구·학습용이며 임상 판단에 쓰기 위한 도구가 아닙니다.
